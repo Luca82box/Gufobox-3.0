@@ -7,8 +7,14 @@ from core.hardware import perform_standby
 system_bp = Blueprint('system', __name__)
 
 # =========================================================
-# GESTIONE ALIMENTAZIONE (Standby, Reboot)
+# HEALTH CHECK (usato dal HEALTHCHECK Docker)
 # =========================================================
+@system_bp.route("/ping", methods=["GET"])
+def api_ping():
+    """Endpoint minimale per health check."""
+    return jsonify({"status": "ok"})
+
+
 @system_bp.route("/system", methods=["POST"])
 def api_system():
     data = request.get_json(silent=True) or {}

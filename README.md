@@ -149,6 +149,34 @@ Gufobox-2.0/
 
 ---
 
+## Modalità Bluetooth
+
+GufoBox supporta due modalità d'uso Bluetooth distinte:
+
+### Modalità Sink — GufoBox come sorgente audio verso device esterni
+
+In questa modalità GufoBox si connette a **casse o cuffie Bluetooth esterne** e invia l'audio verso di esse.
+
+- Usa `/api/bluetooth/scan` per trovare i device vicini
+- Usa `/api/bluetooth/connect` con il MAC del device per collegarsi
+- Il profilo A2DP source viene utilizzato automaticamente da BlueZ
+
+### Modalità Source / Speaker — GufoBox come cassa Bluetooth
+
+In questa modalità GufoBox si presenta come uno **speaker Bluetooth** a cui un telefono, tablet o altra sorgente può collegarsi per inviare audio.
+
+- Usa `POST /api/bluetooth/source-mode` con `{"enabled": true}` per rendere GufoBox visibile e accoppiabile
+- Il dispositivo esterno (telefono/tablet) troverà GufoBox nella lista speaker Bluetooth e potrà collegarsi
+- Usa `POST /api/bluetooth/source-mode` con `{"enabled": false}` per disabilitare la visibilità
+
+> **Nota pratica:** la modalità speaker dipende anche dalla configurazione audio del sistema Raspberry Pi.
+> Per ricevere davvero audio via Bluetooth è necessario avere uno di questi stack installato e configurato:
+> `BlueALSA`, `PulseAudio` (con modulo Bluetooth) o `PipeWire` (con WirePlumber).
+> L'API espone le rotte necessarie e gestisce la parte BlueZ (visibilità/accoppiamento),
+> ma la riproduzione audio reale dipende dallo stack audio del sistema.
+
+---
+
 ## Tech Stack
 
 - **Backend**: Python, Flask, Flask-SocketIO, Eventlet

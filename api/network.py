@@ -1,4 +1,4 @@
-import time
+import eventlet
 
 from flask import Blueprint, request, jsonify
 from core.utils import run_cmd, log
@@ -188,12 +188,7 @@ def api_bluetooth_scan():
 
     try:
         run_cmd(["bluetoothctl", "scan", "on"], timeout=3)
-        # Usa eventlet.sleep se disponibile, altrimenti time.sleep
-        try:
-            import eventlet
-            eventlet.sleep(5)
-        except ImportError:
-            time.sleep(5)
+        eventlet.sleep(5)
         run_cmd(["bluetoothctl", "scan", "off"], timeout=3)
 
         code, stdout, _ = run_cmd(["bluetoothctl", "devices"], timeout=5)

@@ -50,3 +50,7 @@ RFID_MAP_FILE = os.path.join(DATA_DIR, "rfid_map.json")
 STATE_SAVE_DEBOUNCE_SEC = 2
 API_VERSION = "18.0.0”
 
+
+# Cookie Settings
+SESSION_COOKIE_SECURE = os.environ.get("GUFOBOX_COOKIE_SECURE", "0") == "1"
+SESSION_COOKIE_SAMESITE = os.environ.get("GUFOBOX_COOKIE_SAMESITE", "Lax")

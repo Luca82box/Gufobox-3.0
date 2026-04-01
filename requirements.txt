@@ -1,0 +1,11 @@
+flask
+flask-cors
+flask-socketio
+eventlet
+openai
+feedparser
+gpiozero
+RPi.GPIO
+spidev
+smbus2
+requests

@@ -30,23 +30,21 @@ def action_next():
     log("Pulsante FISICO: Traccia Successiva", "info")
     try:
         requests.post(f"{API_BASE}/media/next", timeout=2)
-    except: pass
-
-def action_prev():
+    except Exception as e:
+        log(f"Errore nella richiesta media/next: {e}", "warning")
     log("Pulsante FISICO: Traccia Precedente", "info")
     try:
         requests.post(f"{API_BASE}/media/prev", timeout=2)
-    except: pass
+    except Exception as e:
+        log(f"Errore nella richiesta media/prev: {e}", "warning")
 
 def action_power_hold():
     """Tenendo premuto il tasto Power per 3 secondi andiamo in Standby"""
     log("Pulsante FISICO: Power (Hold) -> Standby", "warning")
     try:
         requests.post(f"{API_BASE}/system", json={"azione": "standby"}, timeout=2)
-    except: pass
-
-# =========================================================
-# GESTIONE DEL VOLUME (HOLD PREV / NEXT)
+    except Exception as e:
+        log(f"Errore nella richiesta standby: {e}", "warning") (HOLD PREV / NEXT)
 # =========================================================
 # Quando tieni premuto il tasto, gpiozero chiamerà questa funzione di continuo
 def action_volume_up():
@@ -57,7 +55,8 @@ def action_volume_up():
         # Lo alziamo di 5
         requests.post(f"{API_BASE}/player/volume", json={"volume": min(100, vol + 5)}, timeout=1)
         log("Pulsante FISICO: Volume +", "debug")
-    except: pass
+    except Exception as e:
+        log(f"Errore nell'aumento del volume: {e}", "warning")
 
 def action_volume_down():
     try:
@@ -66,7 +65,8 @@ def action_volume_down():
         # Lo abbassiamo di 5
         requests.post(f"{API_BASE}/player/volume", json={"volume": max(0, vol - 5)}, timeout=1)
         log("Pulsante FISICO: Volume -", "debug")
-    except: pass
+    except Exception as e:
+        log(f"Errore nella riduzione del volume: {e}", "warning")
 
 # =========================================================
 # INIZIALIZZAZIONE HARDWARE

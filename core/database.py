@@ -64,7 +64,8 @@ def get_daily_stats():
                 ORDER BY date DESC LIMIT 7
             ''')
             return [{"date": row["date"], "minutes": round(row["total_sec"]/60)} for row in cursor]
-    except:
+    except Exception as e:
+        log(f"Errore nel recupero statistiche settimanali: {e}", "warning")
         return []
 
 # --- FUNZIONI SMART RESUME (#8) ---
@@ -87,6 +88,7 @@ def get_resume_position(rfid_uid):
             row = cursor.fetchone()
             if row:
                 return {"target": row["target_path"], "position": row["position_seconds"]}
-    except: pass
+    except Exception as e:
+        log(f"Errore nel recupero posizione smart resume: {e}", "warning")
     return None
 

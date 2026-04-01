@@ -75,15 +75,70 @@ def api_network_connect():
 # =========================================================
 @network_bp.route("/bluetooth/status", methods=["GET"])
 def api_bluetooth_status():
-    """Mock dello stato Bluetooth (implementare con bluetoothctl)"""
+    """Restituisce lo stato Bluetooth reale usando bluetoothctl"""
+    enabled = False
+    connected_device = None
+    paired_devices = []
+
+    try:
+        # Controlla se il controller Bluetooth è acceso
+        code, stdout, _ = run_cmd(["bluetoothctl", "show"], timeout=5)
+        if code == 0:
+            enabled = "Powered: yes" in stdout
+
+            # Legge i dispositivi accoppiati
+            code_p, stdout_p, _ = run_cmd(["bluetoothctl", "paired-devices"], timeout=5)
+            if code_p == 0:
+                for line in stdout_p.splitlines():
+                    # Formato: "Device AA:BB:CC:DD:EE:FF Nome Dispositivo"
+                    parts = line.strip().split(" ", 2)
+                    if len(parts) >= 3 and parts[0] == "Device":
+                        addr = parts[1]
+                        name = parts[2]
+                        paired_devices.append({"address": addr, "name": name})
+
+                        # Controlla se questo dispositivo è connesso
+                        if connected_device is None:
+                            code_i, stdout_i, _ = run_cmd(
+                                ["bluetoothctl", "info", addr], timeout=5
+                            )
+                            if code_i == 0 and "Connected: yes" in stdout_i:
+                                connected_device = name
+
+    except Exception as e:
+        log(f"Errore lettura stato Bluetooth: {e}", "warning")
+
     return jsonify({
-        "enabled": True,
-        "connected_device": None,
-        "paired_devices": []
+        "enabled": enabled,
+        "connected_device": connected_device,
+        "paired_devices": paired_devices
     })
 
 @network_bp.route("/bluetooth/scan", methods=["GET"])
 def api_bluetooth_scan():
-    """Mock scansione Bluetooth"""
-    return jsonify({"devices": []})
+    """Avvia una scansione Bluetooth e ritorna i dispositivi trovati"""
+    import time
+    devices = []
+
+    try:
+        # Avvia la scansione
+        run_cmd(["bluetoothctl", "scan", "on"], timeout=3)
+        # Attende 5 secondi per raccogliere i dispositivi vicini
+        time.sleep(5)
+        # Ferma la scansione
+        run_cmd(["bluetoothctl", "scan", "off"], timeout=3)
+
+        # Legge i dispositivi trovati
+        code, stdout, _ = run_cmd(["bluetoothctl", "devices"], timeout=5)
+        if code == 0:
+            for line in stdout.splitlines():
+                parts = line.strip().split(" ", 2)
+                if len(parts) >= 3 and parts[0] == "Device":
+                    devices.append({"address": parts[1], "name": parts[2]})
+
+    except Exception as e:
+        log(f"Errore scansione Bluetooth: {e}", "warning")
+        return jsonify({"devices": [], "error": str(e)})
+
+    return jsonify({"devices": devices})
 

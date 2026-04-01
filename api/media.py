@@ -7,7 +7,7 @@ from config import RFID_MAP_FILE
 from core.utils import log, run_cmd
 
 # Importiamo il motore audio
-from core.media import start_player, stop_player
+from core.media import start_player, stop_player, send_mpv_command
 
 # Creiamo il Blueprint
 media_bp = Blueprint('media', __name__)
@@ -45,14 +45,18 @@ def api_media_stop():
 def api_media_next():
     """Chiamata dai pulsanti fisici per la traccia successiva"""
     log("Comando NEXT ricevuto", "info")
-    # Se stai usando una playlist in MPV, qui andrebbe il comando IPC per passare alla prossima traccia.
-    # Es: run_cmd(["echo", '{"command": ["playlist-next"]}', "|", "socat", "-", "/tmp/mpv-socket"])
+    response = send_mpv_command(["playlist-next"])
+    if response is None:
+        return jsonify({"error": "Player non attivo o socket IPC non disponibile"}), 500
     return jsonify({"status": "ok"})
 
 @media_bp.route("/media/prev", methods=["POST"])
 def api_media_prev():
     """Chiamata dai pulsanti fisici per la traccia precedente"""
     log("Comando PREV ricevuto", "info")
+    response = send_mpv_command(["playlist-prev"])
+    if response is None:
+        return jsonify({"error": "Player non attivo o socket IPC non disponibile"}), 500
     return jsonify({"status": "ok"})
 
 # =========================================================

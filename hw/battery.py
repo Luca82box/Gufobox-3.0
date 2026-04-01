@@ -1,9 +1,11 @@
+import os
+import hashlib
 import smbus2
 import eventlet
 from core.state import state, bus
 from core.utils import log
 from core.media import start_player
-from api.ai import ai_generate_tts_openai
+from config import AI_TTS_CACHE_DIR, OPENAI_API_KEY
 
 # Indirizzo I2C standard del MAX17048
 MAX17048_ADDRESS = 0x36
@@ -29,12 +31,32 @@ def read_battery_max17048():
 def play_ai_notification(text):
     """Genera e riproduce una notifica audio simpatica in stile gufetto"""
     try:
-        # Usa il TTS di OpenAI per creare l'audio
-        audio_path = ai_generate_tts_openai(text, "nova")
-        if audio_path:
-            start_player(audio_path, mode="audio_only")
+        from openai import OpenAI
+    except ImportError:
+        log(f"Notifica vocale (solo testo): {text}", "info")
+        return
+
+    api_key = OPENAI_API_KEY
+    if not api_key:
+        log(f"Notifica vocale (no API key): {text}", "info")
+        return
+
+    try:
+        client = OpenAI(api_key=api_key)
+        text_hash = hashlib.md5(text.encode('utf-8')).hexdigest()
+        audio_path = os.path.join(AI_TTS_CACHE_DIR, f"notif_{text_hash}.mp3")
+
+        if not os.path.exists(audio_path):
+            tts_response = client.audio.speech.create(
+                model="tts-1",
+                voice="nova",
+                input=text
+            )
+            tts_response.stream_to_file(audio_path)
+
+        start_player(audio_path, mode="audio_only")
     except Exception as e:
-        log(f"Errore notifica AI: {e}", "error")
+        log(f"Errore notifica AI vocale: {e}", "warning")
 
 def _battery_watchdog():
     alert_20_played = False

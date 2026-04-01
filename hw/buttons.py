@@ -32,6 +32,8 @@ def action_next():
         requests.post(f"{API_BASE}/media/next", timeout=2)
     except Exception as e:
         log(f"Errore nella richiesta media/next: {e}", "warning")
+
+def action_prev():
     log("Pulsante FISICO: Traccia Precedente", "info")
     try:
         requests.post(f"{API_BASE}/media/prev", timeout=2)
@@ -44,7 +46,7 @@ def action_power_hold():
     try:
         requests.post(f"{API_BASE}/system", json={"azione": "standby"}, timeout=2)
     except Exception as e:
-        log(f"Errore nella richiesta standby: {e}", "warning") (HOLD PREV / NEXT)
+        log(f"Errore nella richiesta standby: {e}", "warning")
 # =========================================================
 # Quando tieni premuto il tasto, gpiozero chiamerà questa funzione di continuo
 def action_volume_up():

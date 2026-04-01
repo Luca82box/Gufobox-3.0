@@ -21,7 +21,7 @@ def build_mpv_command(target, mode):
     cmd.append(target)
     return cmd
 
-def start_player(target, mode="audio_only"):
+def start_player(target, mode="audio_only", rfid_uid=None):
     """Ferma eventuali riproduzioni in corso e avvia il nuovo file"""
     global player_proc
     
@@ -29,6 +29,14 @@ def start_player(target, mode="audio_only"):
     stop_player()
     
     cmd = build_mpv_command(target, mode)
+
+    # Smart Resume: se abbiamo un rfid_uid, riprendiamo da dove eravamo
+    if rfid_uid:
+        from core.database import get_resume_position
+        resume = get_resume_position(rfid_uid)
+        if resume and resume.get("target") == target and resume.get("position", 0) > 0:
+            cmd.insert(-1, f"--start=+{resume['position']}")
+            log(f"🔖 Smart Resume: ripresa da {resume['position']}s per statuina {rfid_uid}", "info")
     
     # Avvia MPV in background
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

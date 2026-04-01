@@ -30,6 +30,7 @@ FILE_MANAGER_ROOTS = [
     "/mnt",
     "/media",
 ]
+FILE_MANAGER_DEFAULT_PATH = "/home/gufobox/media"
 for p in FILE_MANAGER_ROOTS:
     os.makedirs(p, exist_ok=True)
 
@@ -42,13 +43,14 @@ STATE_FILE = os.path.join(DATA_DIR, "state.json")
 MEDIA_RUNTIME_FILE = os.path.join(DATA_DIR, "media_runtime.json")
 LED_RUNTIME_FILE = os.path.join(DATA_DIR, "led_runtime.json")
 AI_RUNTIME_FILE = os.path.join(DATA_DIR, "ai_runtime.json")
+AI_SETTINGS_FILE = os.path.join(DATA_DIR, "ai_settings.json")
 ALARMS_FILE = os.path.join(DATA_DIR, "alarms.json")
 JOB_STATE_FILE = os.path.join(DATA_DIR, "jobs_state.json")
 RFID_MAP_FILE = os.path.join(DATA_DIR, "rfid_map.json")
 
 # Impostazioni Ottimizzazione
 STATE_SAVE_DEBOUNCE_SEC = 2
-API_VERSION = "18.0.0”
+API_VERSION = "18.0.0"
 
 
 # Cookie Settings

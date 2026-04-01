@@ -9,3 +9,5 @@ RPi.GPIO
 spidev
 smbus2
 requests
+zeroconf
+mfrc522

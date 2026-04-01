@@ -157,6 +157,21 @@ def api_ai_tts_serve(filename):
     return jsonify({"error": "File non trovato"}), 404
 # ... [codice precedente di api/ai.py] ...
 
+def ai_age_profile_rules(age_profile):
+    """Regole di comunicazione basate sull'età"""
+    profiles = {
+        "bambino": {
+            "style": "Usa frasi cortissime e semplici. Parla come a un bambino di 4 anni. Usa tanti emoji e onomatopee (Uhuu! Wow!). Non usare parole difficili."
+        },
+        "ragazzo": {
+            "style": "Puoi usare frasi un po' più articolate. Fai battute simpatiche. Spiega le cose in modo curioso e coinvolgente."
+        },
+        "adulto": {
+            "style": "Parla in modo chiaro e amichevole. Puoi essere più dettagliato nelle spiegazioni."
+        }
+    }
+    return profiles.get(age_profile, profiles["bambino"])
+
 def ai_system_prompt(age_profile, interactive_mode="chat_normale", target_lang="it"):
     rules = ai_age_profile_rules(age_profile)
     

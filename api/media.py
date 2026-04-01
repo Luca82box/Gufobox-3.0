@@ -1,4 +1,3 @@
-import os
 from flask import Blueprint, request, jsonify
 
 # Importiamo lo stato globale, il bus degli eventi e le utility
@@ -55,6 +54,20 @@ def api_media_prev():
     """Chiamata dai pulsanti fisici per la traccia precedente"""
     log("Comando PREV ricevuto", "info")
     response = send_mpv_command(["playlist-prev"])
+    if response is None:
+        return jsonify({"error": "Player non attivo o socket IPC non disponibile"}), 500
+    return jsonify({"status": "ok"})
+
+@media_bp.route("/media/toggle_pause", methods=["POST"])
+def api_media_toggle_pause():
+    """
+    Alterna pausa / ripresa sulla riproduzione in corso.
+    Usa il comando MPV IPC 'cycle pause' per un toggle reale.
+    """
+    log("Comando TOGGLE_PAUSE ricevuto", "info")
+    if not media_runtime.get("player_running"):
+        return jsonify({"error": "Nessuna riproduzione in corso"}), 400
+    response = send_mpv_command(["cycle", "pause"])
     if response is None:
         return jsonify({"error": "Player non attivo o socket IPC non disponibile"}), 500
     return jsonify({"status": "ok"})

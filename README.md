@@ -63,7 +63,7 @@ cd frontend
 npm run dev
 ```
 
-Il dev server sarà disponibile su `http://localhost:5173`.
+Il dev server sarà disponibile su `http://localhost:5174`.
 
 ---
 
@@ -74,8 +74,10 @@ Copia `.env.example` in `.env` e configura:
 | Variabile | Descrizione |
 |-----------|-------------|
 | `OPENAI_API_KEY` | Chiave API OpenAI (opzionale, per le funzioni AI) |
-| `SECRET_KEY` | Chiave segreta Flask per le sessioni |
-| `ADMIN_PIN` | PIN di accesso al pannello admin |
+| `GUFOBOX_SECRET_KEY` | Chiave segreta Flask per le sessioni |
+| `GUFOBOX_ADMIN_PIN` | PIN di accesso al pannello admin |
+| `GUFOBOX_COOKIE_SECURE` | `1` per HTTPS, `0` per HTTP (sviluppo) |
+| `GUFOBOX_COOKIE_SAMESITE` | Policy cookie (`Lax` di default) |
 
 Vedi `.env.example` per la lista completa.
 

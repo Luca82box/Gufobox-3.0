@@ -80,6 +80,17 @@ def save_resume_position(rfid_uid, target_path, position_sec):
     except Exception as e:
         log(f"Errore salvataggio resume: {e}", "warning")
 
+def clear_resume_position(rfid_uid):
+    """
+    Azzera la posizione di resume per una statuina quando il file è finito naturalmente.
+    Evita di ripartire dalla fine alla prossima riproduzione.
+    """
+    try:
+        with _get_conn() as conn:
+            conn.execute("DELETE FROM smart_resume WHERE rfid_uid = ?", (rfid_uid,))
+    except Exception as e:
+        log(f"Errore cancellazione resume: {e}", "warning")
+
 def get_resume_position(rfid_uid):
     """Recupera il secondo esatto da cui ripartire per una specifica statuina"""
     try:

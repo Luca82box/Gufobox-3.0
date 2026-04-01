@@ -18,11 +18,8 @@ API_BASE = "http://127.0.0.1:5000/api"
 # =========================================================
 def action_play_pause():
     log("Pulsante FISICO: Play/Pausa", "info")
-    # Facciamo una chiamata all'API locale. 
-    # (Se suona lo mettiamo in pausa, sennò riprende. Questa logica 
-    # la possiamo perfezionare aggiungendo una rotta /toggle_pause nell'API)
     try:
-        requests.post(f"{API_BASE}/rfid/trigger", json={"rfid_code": "CURRENT"}, timeout=2)
+        requests.post(f"{API_BASE}/media/toggle_pause", timeout=2)
     except Exception as e:
         log(f"Errore chiamata Play/Pausa: {e}", "warning")
 

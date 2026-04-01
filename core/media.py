@@ -172,9 +172,15 @@ def _player_watchdog_loop():
                 if player_proc == proc:
                     log("✅ Riproduzione terminata naturalmente.", "info")
 
-                    # Nota: non tentiamo di leggere la posizione IPC qui perché MPV
-                    # è già terminato. Il salvataggio resume avviene in stop_player()
-                    # quando l'utente ferma manualmente la riproduzione.
+                    # Quando il file termina naturalmente azzeriamo il resume per quell'uid,
+                    # così la prossima riproduzione riparte dall'inizio invece che dalla fine.
+                    if _current_rfid_uid:
+                        try:
+                            from core.database import clear_resume_position
+                            clear_resume_position(_current_rfid_uid)
+                            log(f"🔖 Resume azzerato per statuina {_current_rfid_uid} (fine naturale)", "info")
+                        except Exception as e:
+                            log(f"Impossibile azzerare resume: {e}", "warning")
 
                     media_runtime["player_running"] = False
                     media_runtime["player_mode"] = "idle"

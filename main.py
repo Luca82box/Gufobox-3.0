@@ -23,10 +23,10 @@ from core.hardware import init_hardware_workers
 from core.media import init_media_workers
 
 # Importiamo i driver hardware fisici (GPIO, SPI, PWM, I2C)
-from core.hw_buttons import init_buttons
-from core.hw_rfid import init_rfid
-from core.hw_led import init_leds
-from core.hw_battery import init_battery
+from hw.buttons import init_buttons
+from hw.rfid import init_rfid
+from hw.led import init_leds
+from hw.battery import init_battery
 
 # Importiamo i Blueprint (Le nostre API modulari)
 from api.system import system_bp

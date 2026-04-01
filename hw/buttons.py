@@ -52,20 +52,20 @@ def action_power_hold():
 def action_volume_up():
     try:
         # Leggiamo il volume attuale
-        r = requests.get(f"{API_BASE}/player/volume", timeout=1)
+        r = requests.get(f"{API_BASE}/volume", timeout=1)
         vol = r.json().get("volume", 60)
         # Lo alziamo di 5
-        requests.post(f"{API_BASE}/player/volume", json={"volume": min(100, vol + 5)}, timeout=1)
+        requests.post(f"{API_BASE}/volume", json={"volume": min(100, vol + 5)}, timeout=1)
         log("Pulsante FISICO: Volume +", "debug")
     except Exception as e:
         log(f"Errore nell'aumento del volume: {e}", "warning")
 
 def action_volume_down():
     try:
-        r = requests.get(f"{API_BASE}/player/volume", timeout=1)
+        r = requests.get(f"{API_BASE}/volume", timeout=1)
         vol = r.json().get("volume", 60)
         # Lo abbassiamo di 5
-        requests.post(f"{API_BASE}/player/volume", json={"volume": max(0, vol - 5)}, timeout=1)
+        requests.post(f"{API_BASE}/volume", json={"volume": max(0, vol - 5)}, timeout=1)
         log("Pulsante FISICO: Volume -", "debug")
     except Exception as e:
         log(f"Errore nella riduzione del volume: {e}", "warning")

@@ -11,3 +11,4 @@ smbus2
 requests
 zeroconf
 mfrc522
+rpi-ws281x

@@ -155,7 +155,6 @@ def api_ai_tts_serve(filename):
     if os.path.exists(file_path):
         return send_file(file_path, mimetype="audio/mpeg")
     return jsonify({"error": "File non trovato"}), 404
-# ... [codice precedente di api/ai.py] ...
 
 def ai_age_profile_rules(age_profile):
     """Regole di comunicazione basate sull'età"""

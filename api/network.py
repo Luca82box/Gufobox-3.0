@@ -1,3 +1,4 @@
+import re
 import eventlet
 
 from flask import Blueprint, request, jsonify
@@ -182,6 +183,57 @@ def _parse_bt_device_line(line):
         return {"name": name, "mac": mac}
     return None
 
+
+# MAC address validation regex: XX:XX:XX:XX:XX:XX (hex)
+_MAC_RE = re.compile(r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
+
+
+def _validate_mac_address(mac: str) -> bool:
+    """Verifica che il MAC address sia nel formato standard XX:XX:XX:XX:XX:XX."""
+    return bool(mac and _MAC_RE.match(mac.strip()))
+
+
+def _parse_bt_controller_status(stdout: str) -> dict:
+    """
+    Parsifica l'output di 'bluetoothctl show' e ritorna un dict con:
+      - available: bool   (il controller è presente)
+      - powered:   bool   (Powered: yes)
+      - discoverable: bool
+      - pairable:  bool
+      - address:   str | None
+      - name:      str | None
+    """
+    status = {
+        "available": False,
+        "powered": False,
+        "discoverable": False,
+        "pairable": False,
+        "address": None,
+        "name": None,
+    }
+    if not stdout:
+        return status
+
+    status["available"] = True
+    for line in stdout.splitlines():
+        line = line.strip()
+        # First line: "Controller AA:BB:CC:DD:EE:FF (public)"
+        if line.startswith("Controller "):
+            parts = line.split()
+            if len(parts) >= 2:
+                status["address"] = parts[1]
+        elif line.startswith("Powered:"):
+            status["powered"] = "yes" in line.lower()
+        elif line.startswith("Discoverable:"):
+            status["discoverable"] = "yes" in line.lower()
+        elif line.startswith("Pairable:"):
+            status["pairable"] = "yes" in line.lower()
+        elif line.startswith("Name:"):
+            parts = line.split(None, 1)
+            if len(parts) == 2:
+                status["name"] = parts[1].strip()
+    return status
+
 def _detect_bt_mode(paired_devices):
     """
     Determina se GufoBox sta inviando audio (sink), ricevendo audio (source) o è idle.
@@ -215,21 +267,27 @@ def api_bluetooth_status():
     Payload:
     {
       "enabled": true,
+      "controller_available": true,
+      "powered": true,
+      "discoverable": false,
+      "pairable": false,
+      "controller_address": "AA:BB:CC:DD:EE:FF" | null,
       "connected_device": {"name": "...", "mac": "AA:BB:..."} | null,
       "paired_devices": [{"name": "...", "mac": "AA:BB:..."}],
       "mode": "sink" | "source" | "idle"
     }
     """
-    enabled = False
+    controller = {"available": False, "powered": False, "discoverable": False,
+                  "pairable": False, "address": None, "name": None}
     connected_device = None
     paired_devices = []
 
     try:
         code, stdout, _ = run_cmd(["bluetoothctl", "show"], timeout=5)
         if code == 0:
-            enabled = "Powered: yes" in stdout
+            controller = _parse_bt_controller_status(stdout)
 
-        if enabled:
+        if controller["powered"]:
             code_p, stdout_p, _ = run_cmd(["bluetoothctl", "paired-devices"], timeout=5)
             if code_p == 0:
                 for line in stdout_p.splitlines():
@@ -248,10 +306,15 @@ def api_bluetooth_status():
     except Exception as e:
         log(f"Errore lettura stato Bluetooth: {e}", "warning")
 
-    mode = _detect_bt_mode(paired_devices) if enabled else "idle"
+    mode = _detect_bt_mode(paired_devices) if controller["powered"] else "idle"
 
     return jsonify({
-        "enabled": enabled,
+        "enabled": controller["powered"],
+        "controller_available": controller["available"],
+        "powered": controller["powered"],
+        "discoverable": controller["discoverable"],
+        "pairable": controller["pairable"],
+        "controller_address": controller["address"],
         "connected_device": connected_device,
         "paired_devices": paired_devices,
         "mode": mode,
@@ -262,8 +325,8 @@ def api_bluetooth_toggle():
     """Accende o spegne il controller Bluetooth."""
     data = request.get_json(silent=True) or {}
     enable = data.get("enabled", True)
-    cmd_arg = "power on" if enable else "power off"
-    code, _, err = run_cmd(["bluetoothctl", cmd_arg], timeout=5)
+    power_cmd = ["bluetoothctl", "power", "on"] if enable else ["bluetoothctl", "power", "off"]
+    code, _, err = run_cmd(power_cmd, timeout=5)
     if code != 0:
         log(f"Bluetooth toggle fallito: {err}", "warning")
         return jsonify({"error": "Impossibile cambiare stato Bluetooth"}), 500
@@ -333,6 +396,8 @@ def api_bluetooth_pair():
     mac = data.get("mac", "").strip()
     if not mac:
         return jsonify({"error": "MAC mancante"}), 400
+    if not _validate_mac_address(mac):
+        return jsonify({"error": f"Formato MAC non valido: {mac}. Atteso XX:XX:XX:XX:XX:XX"}), 400
 
     log(f"Bluetooth: pair con {mac}", "info")
     code_p, _, err_p = run_cmd(["bluetoothctl", "pair", mac], timeout=20)
@@ -354,6 +419,8 @@ def api_bluetooth_connect():
     mac = data.get("mac", "").strip()
     if not mac:
         return jsonify({"error": "MAC mancante"}), 400
+    if not _validate_mac_address(mac):
+        return jsonify({"error": f"Formato MAC non valido: {mac}. Atteso XX:XX:XX:XX:XX:XX"}), 400
 
     log(f"Bluetooth: tentativo connessione a {mac}", "info")
 
@@ -402,6 +469,8 @@ def api_bluetooth_forget():
     mac = data.get("mac", "").strip()
     if not mac:
         return jsonify({"error": "MAC mancante"}), 400
+    if not _validate_mac_address(mac):
+        return jsonify({"error": f"Formato MAC non valido: {mac}. Atteso XX:XX:XX:XX:XX:XX"}), 400
 
     # Disconnetti prima se connesso
     run_cmd(["bluetoothctl", "disconnect", mac], timeout=10)

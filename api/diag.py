@@ -108,6 +108,84 @@ def _check_tool(name: str) -> bool:
     return shutil.which(name) is not None
 
 
+def _readiness_audio() -> dict:
+    """
+    Verifica la readiness audio in modo best-effort.
+    Ritorna: {ok: bool, mpv: bool, amixer: bool, aplay: bool, note: str|None}
+    """
+    mpv = _check_tool("mpv")
+    amixer = _check_tool("amixer")
+    aplay = _check_tool("aplay")
+    ok = mpv and amixer
+    note = None
+    if not mpv:
+        note = "mpv non trovato: la riproduzione audio non funzionerà"
+    elif not amixer:
+        note = "amixer non trovato: il controllo volume potrebbe non funzionare"
+    return {"ok": ok, "mpv": mpv, "amixer": amixer, "aplay": aplay, "note": note}
+
+
+def _readiness_bluetooth() -> dict:
+    """
+    Verifica la readiness Bluetooth in modo best-effort.
+    Ritorna: {ok: bool, bluetoothctl: bool, rfkill: bool, controller_available: bool, note: str|None}
+    """
+    bt_tool = _check_tool("bluetoothctl")
+    rfkill = _check_tool("rfkill")
+
+    controller_available = False
+    if bt_tool:
+        try:
+            code, stdout, _ = run_cmd(["bluetoothctl", "show"], timeout=3)
+            controller_available = code == 0 and "Controller" in stdout
+        except Exception:
+            pass
+
+    ok = bt_tool and controller_available
+    note = None
+    if not bt_tool:
+        note = "bluetoothctl non trovato: funzionalità Bluetooth non disponibili"
+    elif not controller_available:
+        note = "Controller Bluetooth non rilevato (best-effort: potrebbe essere rfkill bloccato)"
+    return {
+        "ok": ok,
+        "bluetoothctl": bt_tool,
+        "rfkill": rfkill,
+        "controller_available": controller_available,
+        "note": note,
+    }
+
+
+def _readiness_network() -> dict:
+    """
+    Verifica la readiness network in modo best-effort.
+    Ritorna: {ok: bool, nmcli: bool, note: str|None}
+    """
+    nmcli = _check_tool("nmcli")
+    ok = nmcli
+    note = None if nmcli else "nmcli non trovato: gestione Wi-Fi/hotspot non disponibile"
+    return {"ok": ok, "nmcli": nmcli, "note": note}
+
+
+def _readiness_standby_alarm() -> dict:
+    """
+    Verifica la readiness del percorso standby/alarm in modo best-effort.
+    Ritorna: {ok: bool, vcgencmd: bool, cpufreq_set: bool, note: str|None}
+    """
+    vcgencmd = _check_tool("vcgencmd")
+    cpufreq = _check_tool("cpufreq-set")
+    # Su RPi entrambi dovrebbero essere presenti; su CI/desktop saranno assenti
+    ok = vcgencmd and cpufreq
+    note = None
+    if not vcgencmd and not cpufreq:
+        note = "vcgencmd/cpufreq-set assenti: standby funziona in modalità software-only"
+    elif not vcgencmd:
+        note = "vcgencmd non trovato: HDMI power management non disponibile"
+    elif not cpufreq:
+        note = "cpufreq-set non trovato: CPU frequency scaling non disponibile"
+    return {"ok": ok, "vcgencmd": vcgencmd, "cpufreq_set": cpufreq, "note": note}
+
+
 # ─── endpoints ───────────────────────────────────────────────────────────────
 
 @diag_bp.route("/admin/metrics", methods=["GET"])
@@ -183,9 +261,11 @@ def api_diag_summary():
 
     # Standby state
     in_standby = False
+    standby_state = "awake"
     try:
-        from core.hardware import is_in_standby
+        from core.hardware import is_in_standby, get_standby_state
         in_standby = is_in_standby()
+        standby_state = get_standby_state()
     except Exception:
         pass
 
@@ -195,6 +275,14 @@ def api_diag_summary():
         if j.get("status") not in ("done", "error", "canceled")
     )
     alarm_count = len(alarms_list)
+
+    # Readiness summary (best-effort, non crasha in ambienti non-RPi)
+    readiness = {
+        "audio": _readiness_audio(),
+        "bluetooth": _readiness_bluetooth(),
+        "network": _readiness_network(),
+        "standby_alarm": _readiness_standby_alarm(),
+    }
 
     return jsonify({
         "ok": len(warnings) == 0,
@@ -210,11 +298,13 @@ def api_diag_summary():
         "led_master_enabled": led_runtime.get("master_enabled", True),
         "pin_enabled": state.get("pin_enabled", True),
         "in_standby": in_standby,
+        "standby_state": standby_state,
         "ota_status": ota_status,
         "ota_running": ota_running,
         "backup_count": backup_count,
         "active_jobs": active_jobs,
         "alarm_count": alarm_count,
+        "readiness": readiness,
     })
 
 
@@ -227,6 +317,7 @@ def api_diag_tools():
         "mpv", "ffmpeg", "git", "pip", "python3",
         "nmcli", "rfkill", "amixer", "aplay",
         "reboot", "shutdown", "cpufreq-set",
+        "bluetoothctl",
     ]
     result = {tool: _check_tool(tool) for tool in tools}
     # python3 is always required; other tools are best-effort on non-RPi environments

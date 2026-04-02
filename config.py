@@ -71,6 +71,9 @@ OTA_LOG_FILE = os.path.join(DATA_DIR, "ota.log")
 OTA_STATE_FILE = os.path.join(DATA_DIR, "ota_state.json")
 os.makedirs(BACKUP_DIR, exist_ok=True)
 
+# Event log (operational ring buffer)
+EVENT_LOG_FILE = os.path.join(LOG_DIR, "events.jsonl")
+
 # LED Master
 LED_MASTER_FILE = os.path.join(DATA_DIR, "led_master.json")
 

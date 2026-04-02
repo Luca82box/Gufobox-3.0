@@ -8,6 +8,7 @@ from flask import Blueprint, request, jsonify
 from core.state import media_runtime, alarms_list, bus, now_ts
 from core.utils import run_cmd, t, log
 from core.hardware import perform_standby, is_in_standby, get_standby_state
+from core.event_log import log_event
 from config import BASE_DIR, BACKUP_DIR, OTA_LOG_FILE, OTA_STATE_FILE
 
 # Creiamo il Blueprint per le rotte di sistema
@@ -30,6 +31,7 @@ def api_system():
     
     if azione == "standby":
         # Richiama la funzione hardware isolata che spegne le periferiche
+        log_event("standby", "info", "Standby avviato da admin")
         perform_standby()
         return jsonify({"status": "ok", "message": t("ok_standby")})
         
@@ -209,6 +211,7 @@ def _run_ota(mode):
         "last_error": None,
     })
     _save_ota_state(ota_state)
+    log_event("ota", "info", f"OTA avviato (modalità: {mode})", {"mode": mode})
 
     def _progress(pct, desc):
         ota_state["progress_percent"] = pct
@@ -263,6 +266,7 @@ def _run_ota(mode):
         ota_state["description"] = "Aggiornamento completato con successo!"
         _ota_log("Aggiornamento completato con successo!")
         bus.emit_notification("Aggiornamento completato! ✅", "success")
+        log_event("ota", "info", f"OTA completato con successo (modalità: {mode})", {"mode": mode})
 
     except Exception as e:
         ota_state["status"] = "error"
@@ -272,6 +276,7 @@ def _run_ota(mode):
         ota_state["description"] = f"Errore: {e}"
         _ota_log(f"ERRORE OTA: {e}")
         bus.emit_notification(f"Errore aggiornamento: {e}", "error")
+        log_event("ota", "error", f"OTA fallito (modalità: {mode}): {e}", {"mode": mode, "error": str(e)})
     finally:
         ota_state["finished_at"] = datetime.now().isoformat()
         _save_ota_state(ota_state)
@@ -367,6 +372,7 @@ def api_backup_delete(backup_name):
     try:
         shutil.rmtree(bpath)
         log(f"Backup '{trusted_name}' eliminato", "info")
+        log_event("ota", "info", f"Backup eliminato: {trusted_name}", {"backup_name": trusted_name})
         return jsonify({"status": "ok"})
     except Exception as e:
         log(f"Errore eliminazione backup '{trusted_name}': {e}", "warning")
@@ -421,9 +427,11 @@ def api_rollback():
         if errors:
             _ota_log(f"Rollback completato con {len(errors)} errori.")
             bus.emit_notification("Rollback completato con avvisi ⚠️", "warning")
+            log_event("ota", "warning", f"Rollback da {trusted_name} completato con {len(errors)} errori", {"backup_name": trusted_name, "errors": errors})
         else:
             _ota_log("Rollback completato con successo!")
             bus.emit_notification("Rollback completato! ✅ Riavvia per applicare le modifiche.", "success")
+            log_event("ota", "info", f"Rollback completato con successo da {trusted_name}", {"backup_name": trusted_name})
 
     rb_thread = threading.Thread(target=_do_rollback, daemon=True)
     rb_thread.start()

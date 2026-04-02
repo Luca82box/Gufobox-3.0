@@ -4,6 +4,7 @@ import eventlet
 from flask import Blueprint, request, jsonify
 from core.utils import run_cmd, log
 from core.state import bus
+from core.event_log import log_event
 from config import HOTSPOT_SSID, HOTSPOT_PASS, HOTSPOT_CONN_NAME
 
 network_bp = Blueprint('network', __name__)
@@ -93,8 +94,10 @@ def api_network_connect():
     
     if code == 0:
         bus.emit_notification("Connessione Wi-Fi stabilita!", "success")
+        log_event("network", "info", f"Connessione Wi-Fi riuscita (SSID: {ssid})", {"ssid": ssid})
         return jsonify({"status": "ok"})
     else:
+        log_event("network", "error", f"Connessione Wi-Fi fallita (SSID: {ssid})", {"ssid": ssid, "error": err})
         return jsonify({"error": f"Errore di connessione: {err}"}), 500
 
 # =========================================================
@@ -147,9 +150,11 @@ def api_hotspot_start():
     if code == 0:
         bus.emit_notification(f"Hotspot '{HOTSPOT_SSID}' attivo! 📡", "success")
         log(f"Hotspot '{HOTSPOT_SSID}' avviato", "info")
+        log_event("network", "info", f"Hotspot avviato (SSID: {HOTSPOT_SSID})")
         return jsonify({"status": "ok", "ssid": HOTSPOT_SSID})
     else:
         log(f"Errore avvio hotspot: {err}", "warning")
+        log_event("network", "error", f"Avvio hotspot fallito", {"error": err})
         return jsonify({"error": "Impossibile avviare l'hotspot. Controlla il log per i dettagli."}), 500
 
 
@@ -403,10 +408,12 @@ def api_bluetooth_pair():
     code_p, _, err_p = run_cmd(["bluetoothctl", "pair", mac], timeout=20)
     if code_p != 0:
         log(f"Bluetooth: pair {mac} fallito: {err_p}", "warning")
+        log_event("bluetooth", "error", f"Pairing Bluetooth fallito ({mac})", {"mac": mac, "error": err_p})
         return jsonify({"error": f"Accoppiamento fallito per {mac}. Controlla che il dispositivo sia in modalità pairing."}), 500
 
     run_cmd(["bluetoothctl", "trust", mac], timeout=5)
     log(f"Bluetooth: {mac} accoppiato e trusted", "info")
+    log_event("bluetooth", "info", f"Bluetooth paired con {mac}", {"mac": mac})
     return jsonify({"status": "ok", "mac": mac})
 
 @network_bp.route("/bluetooth/connect", methods=["POST"])
@@ -431,9 +438,11 @@ def api_bluetooth_connect():
 
     if code == 0:
         bus.emit_notification(f"Bluetooth connesso a {mac}!", "success")
+        log_event("bluetooth", "info", f"Bluetooth connesso a {mac}", {"mac": mac})
         return jsonify({"status": "ok", "mac": mac})
     else:
         log(f"Bluetooth: connessione a {mac} fallita: {err}", "warning")
+        log_event("bluetooth", "error", f"Connessione Bluetooth fallita ({mac})", {"mac": mac, "error": err})
         return jsonify({"error": f"Impossibile connettersi al dispositivo {mac}"}), 500
 
 @network_bp.route("/bluetooth/disconnect", methods=["POST"])
@@ -452,6 +461,7 @@ def api_bluetooth_disconnect():
                     if code_i == 0 and "Connected: yes" in stdout_i:
                         run_cmd(["bluetoothctl", "disconnect", dev["mac"]], timeout=10)
                         log(f"Bluetooth: disconnesso da {dev['mac']}", "info")
+                        log_event("bluetooth", "info", f"Bluetooth disconnesso da {dev['mac']}", {"mac": dev["mac"]})
                         return jsonify({"status": "ok"})
     except Exception as e:
         log(f"Bluetooth: errore disconnessione: {e}", "warning")

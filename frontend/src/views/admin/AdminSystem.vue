@@ -6,6 +6,11 @@
       <p>Gestisci aggiornamenti, backup, rollback e alimentazione.</p>
     </div>
 
+    <!-- Standby banner -->
+    <div v-if="inStandby" class="standby-banner">
+      🌙 <strong>GufoBox in standby applicativo</strong> — clicca "Riavvia" o "Standby" per interagire.
+    </div>
+
     <!-- Power controls -->
     <div class="card">
       <h3>Alimentazione 🔌</h3>
@@ -24,6 +29,19 @@
         <span>Stato: <strong>{{ otaStatusLabel }}</strong></span>
         <span v-if="otaStatus.mode"> — Modalità: {{ otaStatus.mode }}</span>
         <span v-if="otaStatus.finished_at"> — Finito: {{ formatDate(otaStatus.finished_at) }}</span>
+      </div>
+
+      <!-- Progress bar shown while running -->
+      <div v-if="otaRunning" class="ota-progress">
+        <div class="progress-bar">
+          <div class="progress-fill" :style="{ width: (otaStatus.progress_percent || 0) + '%' }"></div>
+        </div>
+        <p class="progress-desc">{{ otaStatus.description || 'Aggiornamento in corso...' }}</p>
+      </div>
+
+      <!-- Last error if any -->
+      <div v-if="otaStatus.last_error" class="ota-error-box">
+        ⚠️ Ultimo errore: {{ otaStatus.last_error }}
       </div>
 
       <div class="ota-actions">
@@ -83,10 +101,23 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useApi } from '../../composables/useApi'
 
 const { getApi, guardedCall, extractApiError } = useApi()
+
+// Standby state
+const inStandby = ref(false)
+
+async function loadStandbyStatus() {
+  try {
+    const api = getApi()
+    const { data } = await guardedCall(() => api.get('/system/standby'))
+    inStandby.value = data?.in_standby || false
+  } catch (e) {
+    // Not critical — may not be available
+  }
+}
 
 // Power
 async function sendAction(azione) {
@@ -95,18 +126,22 @@ async function sendAction(azione) {
   try {
     const api = getApi()
     await guardedCall(() => api.post('/system', { azione }))
+    if (azione === 'standby') {
+      inStandby.value = true
+    }
   } catch (e) {
     alert(extractApiError(e, `Errore: ${azione}`))
   }
 }
 
 // OTA
-const otaStatus = ref({ status: 'idle', mode: null, started_at: null, finished_at: null, error: null })
+const otaStatus = ref({ status: 'idle', mode: null, started_at: null, finished_at: null, error: null, last_error: null, progress_percent: null, description: null, running: false })
 const otaLog = ref('')
 const showLog = ref(false)
 const rollingBack = ref(false)
+let otaPollInterval = null
 
-const otaRunning = computed(() => otaStatus.value.status === 'running')
+const otaRunning = computed(() => otaStatus.value.running || otaStatus.value.status === 'running')
 const otaStatusLabel = computed(() => {
   const map = { idle: 'In attesa', running: 'In corso...', done: 'Completato ✅', error: 'Errore ❌' }
   return map[otaStatus.value.status] || otaStatus.value.status
@@ -117,6 +152,15 @@ async function loadOtaStatus() {
     const api = getApi()
     const { data } = await guardedCall(() => api.get('/system/ota/status'))
     otaStatus.value = data
+    // Auto-poll while running
+    if (data.running || data.status === 'running') {
+      if (!otaPollInterval) {
+        otaPollInterval = setInterval(loadOtaStatus, 3000)
+      }
+    } else {
+      clearInterval(otaPollInterval)
+      otaPollInterval = null
+    }
   } catch (e) {
     console.error('Errore stato OTA:', extractApiError(e))
   }
@@ -194,8 +238,13 @@ function formatDate(isoStr) {
 }
 
 onMounted(() => {
+  loadStandbyStatus()
   loadOtaStatus()
   loadBackups()
+})
+
+onUnmounted(() => {
+  clearInterval(otaPollInterval)
 })
 </script>
 
@@ -208,6 +257,16 @@ onMounted(() => {
 
 .header-section h2 { margin: 0; color: #fff; }
 .header-section p { color: #aaa; margin: 5px 0 0 0; }
+
+/* Standby banner */
+.standby-banner {
+  background: #1e2a4a;
+  border: 1px solid #3f51b5;
+  border-radius: 10px;
+  padding: 14px 18px;
+  color: #8ab4f8;
+  font-size: 0.95rem;
+}
 
 .card {
   background: #2a2a35;
@@ -270,6 +329,41 @@ onMounted(() => {
 .ota-status-bar.running { border-left-color: #ff9800; }
 .ota-status-bar.done { border-left-color: #4caf50; }
 .ota-status-bar.error { border-left-color: #e53935; }
+
+.ota-progress {
+  margin-bottom: 15px;
+}
+
+.progress-bar {
+  background: #1e1e26;
+  border-radius: 6px;
+  height: 10px;
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+
+.progress-fill {
+  height: 100%;
+  background: #ff9800;
+  border-radius: 6px;
+  transition: width 0.5s ease;
+}
+
+.progress-desc {
+  color: #aaa;
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.ota-error-box {
+  background: #2a1a1a;
+  border: 1px solid #e53935;
+  border-radius: 8px;
+  padding: 10px 15px;
+  color: #ff8a80;
+  font-size: 0.9rem;
+  margin-bottom: 12px;
+}
 
 .ota-actions {
   display: flex;

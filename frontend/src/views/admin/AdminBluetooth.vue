@@ -13,6 +13,7 @@
           <p v-if="loadingStatus">Lettura stato in corso... ⏳</p>
           <p v-else :class="isBluetoothEnabled ? 'text-green' : 'text-red'">
             <strong>{{ isBluetoothEnabled ? 'Attivo e pronto' : 'Disattivato' }}</strong>
+            <span v-if="btMode && btMode !== 'idle'" class="bt-mode-badge">{{ btMode === 'sink' ? '🔊 Output verso cuffie/casse' : '🎙️ Modalità speaker' }}</span>
           </p>
         </div>
         
@@ -20,6 +21,14 @@
           <input type="checkbox" v-model="isBluetoothEnabled" @change="toggleBluetooth">
           <span class="slider round"></span>
         </label>
+      </div>
+
+      <!-- Unblock button (for when BT is rfkill-blocked) -->
+      <div v-if="!isBluetoothEnabled" class="unblock-section">
+        <p class="unblock-hint">Se il Bluetooth non si attiva, potrebbe essere bloccato a livello software.</p>
+        <button class="btn-unblock" @click="unblockBluetooth" :disabled="isBusy">
+          🔓 Sblocca Bluetooth (rfkill)
+        </button>
       </div>
 
       <div v-if="isBluetoothEnabled && connectedDevice" class="connected-device">
@@ -70,10 +79,35 @@
             <span class="device-name">{{ dev.name || 'Dispositivo Sconosciuto' }}</span>
             <span class="device-mac">{{ dev.mac }}</span>
           </div>
-          <button class="btn-connect" @click="() => connectDevice(dev.mac)" :disabled="isBusy">
-            Accoppia e Connetti
-          </button>
+          <div class="device-actions">
+            <button class="btn-pair" @click="() => pairDevice(dev.mac)" :disabled="isBusy">
+              🔗 Accoppia
+            </button>
+            <button class="btn-connect" @click="() => connectDevice(dev.mac)" :disabled="isBusy">
+              Connetti
+            </button>
+          </div>
         </div>
+      </div>
+    </div>
+
+    <!-- Speaker mode (GufoBox as BT receiver / sink) -->
+    <div v-if="isBluetoothEnabled" class="devices-card">
+      <div class="card-header">
+        <h3>Modalità Speaker 🔈</h3>
+        <label class="switch">
+          <input type="checkbox" v-model="sourceModeEnabled" @change="toggleSourceMode">
+          <span class="slider round"></span>
+        </label>
+      </div>
+      <p class="source-mode-desc">
+        Abilita questa modalità per far apparire la GufoBox come <strong>cassa Bluetooth</strong>:
+        potrai collegare il tuo telefono o tablet e riprodurre audio su GufoBox.
+        <br><em>Nota: richiede BlueALSA / PipeWire configurato per l'audio A2DP.</em>
+      </p>
+      <div class="source-mode-status" :class="{ active: sourceModeEnabled }">
+        <span v-if="sourceModeEnabled">✅ GufoBox visibile come speaker Bluetooth</span>
+        <span v-else>⭕ Modalità speaker non attiva</span>
       </div>
     </div>
 
@@ -93,7 +127,9 @@ const connectedDevice = ref(null)
 const pairedDevices = ref([])
 const discoveredDevices = ref([])
 const isScanning = ref(false)
-const isBusy = ref(false) // Blocca i bottoni durante le connessioni
+const isBusy = ref(false)
+const btMode = ref('idle')
+const sourceModeEnabled = ref(false)
 
 // 1. Carica stato iniziale
 async function loadBluetoothStatus() {
@@ -105,10 +141,21 @@ async function loadBluetoothStatus() {
     isBluetoothEnabled.value = data?.enabled || false
     connectedDevice.value = data?.connected_device || null
     pairedDevices.value = data?.paired_devices || []
+    btMode.value = data?.mode || 'idle'
   } catch (e) {
     console.warn('Backend Bluetooth non ancora implementato', extractApiError(e))
   } finally {
     loadingStatus.value = false
+  }
+}
+
+async function loadSourceModeStatus() {
+  try {
+    const api = getApi()
+    const { data } = await guardedCall(() => api.get('/bluetooth/source-mode'))
+    sourceModeEnabled.value = data?.enabled || false
+  } catch (e) {
+    // Best-effort
   }
 }
 
@@ -127,7 +174,25 @@ async function toggleBluetooth() {
   }
 }
 
-// 3. Scansiona
+// 3. Sblocca rfkill
+async function unblockBluetooth() {
+  isBusy.value = true
+  try {
+    const api = getApi()
+    const { data } = await guardedCall(() => api.post('/bluetooth/unblock'))
+    if (data?.status === 'ok') {
+      await loadBluetoothStatus()
+    } else {
+      alert('Sblocco parzialmente riuscito. Controlla il log per i dettagli.')
+    }
+  } catch (e) {
+    alert(extractApiError(e, 'Errore sblocco Bluetooth'))
+  } finally {
+    isBusy.value = false
+  }
+}
+
+// 4. Scansiona
 async function scanDevices() {
   isScanning.value = true
   discoveredDevices.value = []
@@ -142,7 +207,22 @@ async function scanDevices() {
   }
 }
 
-// 4. Connetti
+// 5. Accoppia (pair only)
+async function pairDevice(mac) {
+  isBusy.value = true
+  try {
+    const api = getApi()
+    await guardedCall(() => api.post('/bluetooth/pair', { mac }))
+    alert(`Dispositivo ${mac} accoppiato con successo!`)
+    await loadBluetoothStatus()
+  } catch (e) {
+    alert(extractApiError(e, `Impossibile accoppiare ${mac}`))
+  } finally {
+    isBusy.value = false
+  }
+}
+
+// 6. Connetti
 async function connectDevice(mac) {
   isBusy.value = true
   try {
@@ -150,7 +230,7 @@ async function connectDevice(mac) {
     await guardedCall(() => api.post('/bluetooth/connect', { mac }))
     alert('Connessione stabilita!')
     await loadBluetoothStatus()
-    discoveredDevices.value = [] // Pulisce i risultati di ricerca
+    discoveredDevices.value = []
   } catch (e) {
     alert(extractApiError(e, 'Impossibile connettersi. Assicurati che il dispositivo sia acceso.'))
   } finally {
@@ -158,7 +238,7 @@ async function connectDevice(mac) {
   }
 }
 
-// 5. Disconnetti
+// 7. Disconnetti
 async function disconnectDevice() {
   if (!connectedDevice.value) return
   isBusy.value = true
@@ -173,7 +253,7 @@ async function disconnectDevice() {
   }
 }
 
-// 6. Dimentica (Unpair)
+// 8. Dimentica (Unpair)
 async function forgetDevice(mac) {
   if (!confirm('Vuoi davvero dimenticare questo dispositivo?')) return
   isBusy.value = true
@@ -188,8 +268,20 @@ async function forgetDevice(mac) {
   }
 }
 
+// 9. Source mode (speaker)
+async function toggleSourceMode() {
+  try {
+    const api = getApi()
+    await guardedCall(() => api.post('/bluetooth/source-mode', { enabled: sourceModeEnabled.value }))
+  } catch (e) {
+    alert(extractApiError(e, 'Errore toggle modalità speaker'))
+    sourceModeEnabled.value = !sourceModeEnabled.value // Revert
+  }
+}
+
 onMounted(() => {
   loadBluetoothStatus()
+  loadSourceModeStatus()
 })
 </script>
 
@@ -227,6 +319,40 @@ onMounted(() => {
 .text-green { color: #4caf50; }
 .text-red { color: #ff4d4d; }
 
+.bt-mode-badge {
+  margin-left: 10px;
+  font-size: 0.8rem;
+  background: #1e1e26;
+  padding: 2px 8px;
+  border-radius: 12px;
+  color: #8ab4f8;
+}
+
+/* Unblock */
+.unblock-section {
+  background: #1e1e26;
+  border: 1px solid #3a3a48;
+  border-radius: 8px;
+  padding: 12px 15px;
+  margin-top: 10px;
+}
+
+.unblock-hint {
+  color: #aaa;
+  font-size: 0.85rem;
+  margin: 0 0 10px 0;
+}
+
+.btn-unblock {
+  background: #ff9800;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
 .connected-device {
   display: flex;
   align-items: center;
@@ -235,6 +361,7 @@ onMounted(() => {
   padding: 15px;
   border-radius: 8px;
   border-left: 4px solid #3f51b5;
+  margin-top: 10px;
 }
 
 .device-icon { font-size: 2rem; }
@@ -293,6 +420,16 @@ onMounted(() => {
 .device-info { display: flex; flex-direction: column; }
 .device-actions { display: flex; gap: 10px; }
 
+.btn-pair {
+  background: #7c4dff;
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
 .btn-connect {
   background: #4caf50;
   color: white;
@@ -312,6 +449,27 @@ onMounted(() => {
 }
 
 button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Source mode */
+.source-mode-desc {
+  color: #aaa;
+  font-size: 0.9rem;
+  margin: 0 0 12px 0;
+  line-height: 1.5;
+}
+
+.source-mode-status {
+  background: #1e1e26;
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: #aaa;
+  border-left: 4px solid #555;
+}
+
+.source-mode-status.active {
+  border-left-color: #4caf50;
+  color: #fff;
+}
 
 /* Toggle Switch */
 .switch { position: relative; display: inline-block; width: 60px; height: 34px; }

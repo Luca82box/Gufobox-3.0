@@ -1,11 +1,15 @@
 import { ref, computed } from 'vue'
 import { useApi } from './useApi'
 
+const UPLOAD_DONE_CLEAR_MS = 4000  // ms to keep completed upload entries visible
+
 // Stato condiviso
 const fileCurrentPath = ref('/home/gufobox/media')
 const fileDefaultPath = ref('/home/gufobox/media')
 const fileAllowedRoots = ref([])
 const fileEntries = ref([])
+const fileLoading = ref(false)
+const fileError = ref('')
 const selectedFilePaths = ref([])
 const newFolderName = ref('')
 
@@ -15,6 +19,15 @@ const clipboardPaths = ref([])
 const fileHistory = ref([])
 const fileHistoryIndex = ref(-1)
 
+// Search / sort / filter (client-side)
+const fileSearch = ref('')
+const fileSortBy = ref('name')    // name | size | mtime | type
+const fileSortOrder = ref('asc')  // asc | desc
+const fileFilterType = ref('')    // '' | audio | video | image | dir | archive | text
+
+// Upload progress
+const uploadQueue = ref([])  // [{name, progress, status, error}]
+
 // Stato Menu e Preview
 const fileMenuOpen = ref(false)
 const fileMenuTarget = ref(null)
@@ -23,6 +36,33 @@ const previewFile = ref(null)
 const previewUrl = ref('')
 const previewLoading = ref(false)
 let previewObjectUrl = null
+
+// =========================================================
+// Helper: formattazione
+// =========================================================
+export function formatBytes(bytes) {
+  if (!bytes || bytes === 0) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
+}
+
+export function formatDate(ts) {
+  if (!ts) return ''
+  return new Date(ts * 1000).toLocaleString()
+}
+
+export function fileIcon(entry) {
+  if (entry?.is_dir) return '📁'
+  const t = entry?.type || 'unknown'
+  if (t === 'audio') return '🎵'
+  if (t === 'video') return '🎬'
+  if (t === 'image') return '🖼️'
+  if (t === 'archive') return '🗜️'
+  if (t === 'text') return '📝'
+  return '📄'
+}
 
 export function useFileManager() {
   const { apiReady, guardedCall, getApi, extractApiError } = useApi()
@@ -53,6 +93,33 @@ export function useFileManager() {
     return out
   })
 
+  // Client-side filtered + sorted entries
+  const filteredEntries = computed(() => {
+    let entries = fileEntries.value
+    const q = fileSearch.value.trim().toLowerCase()
+    if (q) {
+      entries = entries.filter(e => e.name.toLowerCase().includes(q))
+    }
+    if (fileFilterType.value) {
+      if (fileFilterType.value === 'dir') {
+        entries = entries.filter(e => e.is_dir)
+      } else {
+        entries = entries.filter(e => e.type === fileFilterType.value)
+      }
+    }
+    const by = fileSortBy.value
+    const rev = fileSortOrder.value === 'desc'
+    const key = {
+      name:  e => e.name.toLowerCase(),
+      size:  e => e.size || 0,
+      mtime: e => e.mtime || 0,
+      type:  e => e.type || '',
+    }[by] || (e => e.name.toLowerCase())
+    const dirs = [...entries.filter(e => e.is_dir)].sort((a, b) => key(a) < key(b) ? (rev ? 1 : -1) : key(a) > key(b) ? (rev ? -1 : 1) : 0)
+    const files = [...entries.filter(e => !e.is_dir)].sort((a, b) => key(a) < key(b) ? (rev ? 1 : -1) : key(a) > key(b) ? (rev ? -1 : 1) : 0)
+    return dirs.concat(files)
+  })
+
   // 2. Navigazione e Storia
   function pushHistory(path) {
     if (!path) return
@@ -76,6 +143,8 @@ export function useFileManager() {
 
   async function loadFileList(path = fileCurrentPath.value, { addToHistory = true } = {}) {
     if (!apiReady.value) return
+    fileLoading.value = true
+    fileError.value = ''
     try {
       const api = getApi()
       const { data } = await guardedCall(() => api.get('/files/list', { params: { path } }))
@@ -84,9 +153,12 @@ export function useFileManager() {
       fileDefaultPath.value = data?.default_path || fileDefaultPath.value
       fileAllowedRoots.value = data?.allowed_roots || fileAllowedRoots.value
       selectedFilePaths.value = []
+      fileSearch.value = ''
       if (addToHistory) pushHistory(fileCurrentPath.value)
     } catch (e) {
-      alert(extractApiError(e, 'Errore lettura cartella'))
+      fileError.value = extractApiError(e, 'Errore lettura cartella')
+    } finally {
+      fileLoading.value = false
     }
   }
 
@@ -103,91 +175,99 @@ export function useFileManager() {
     await loadFileList(fileHistory.value[fileHistoryIndex.value], { addToHistory: false })
   }
 
+  // Multi-select: ogni click toglie o aggiunge
   function toggleFileSelection(path) {
-    if (selectedFilePaths.value.includes(path)) {
+    const idx = selectedFilePaths.value.indexOf(path)
+    if (idx >= 0) {
       selectedFilePaths.value = selectedFilePaths.value.filter(p => p !== path)
     } else {
-      selectedFilePaths.value = [path] // Sostituisci con .push(path) se vuoi selezione multipla libera
+      selectedFilePaths.value = [...selectedFilePaths.value, path]
     }
   }
 
-  // 3. Azioni sui File (Crea, Rinomina, Copia, Elimina, ecc.)
-  async function createFolder() {
-    if (!newFolderName.value.trim()) return alert('Nome cartella mancante')
+  function selectAll() {
+    selectedFilePaths.value = filteredEntries.value.map(e => e.path)
+  }
+
+  function clearSelection() {
+    selectedFilePaths.value = []
+  }
+
+  // 3. Azioni sui File
+  async function createFolder(onSuccess) {
+    if (!newFolderName.value.trim()) return
     try {
       const api = getApi()
       await guardedCall(() => api.post('/files/mkdir', { path: fileCurrentPath.value, name: newFolderName.value }))
       newFolderName.value = ''
       await loadFileList(fileCurrentPath.value, { addToHistory: false })
+      if (onSuccess) onSuccess('Cartella creata')
     } catch (e) {
-      alert(extractApiError(e, 'Errore creazione cartella'))
+      fileError.value = extractApiError(e, 'Errore creazione cartella')
     }
   }
 
-  async function renameEntry(entry) {
-    const newName = prompt('Nuovo nome:', entry.name)
-    if (!newName) return
+  async function renameEntry(entry, newName) {
+    if (!newName || newName === entry.name) return
     try {
       const api = getApi()
       await guardedCall(() => api.post('/files/rename', { path: entry.path, new_name: newName }))
       await loadFileList(fileCurrentPath.value, { addToHistory: false })
     } catch (e) {
-      alert(extractApiError(e, 'Errore rinomina'))
+      fileError.value = extractApiError(e, 'Errore rinomina')
     }
   }
 
   function moveSelected() {
-    if (!selectedFilePaths.value.length) return alert('Seleziona un elemento')
+    if (!selectedFilePaths.value.length) return
     clipboardMode.value = 'move'
     clipboardPaths.value = [...selectedFilePaths.value]
-    alert('Vai nella cartella destinazione e premi Incolla.')
   }
 
   function copySelected() {
-    if (!selectedFilePaths.value.length) return alert('Seleziona un elemento')
+    if (!selectedFilePaths.value.length) return
     clipboardMode.value = 'copy'
     clipboardPaths.value = [...selectedFilePaths.value]
-    alert('Vai nella cartella destinazione e premi Incolla.')
+  }
+
+  function clearClipboard() {
+    clipboardMode.value = ''
+    clipboardPaths.value = []
   }
 
   async function pasteClipboard(onJobCreated) {
-    if (!clipboardMode.value || !clipboardPaths.value.length) return alert('Clipboard vuota')
+    if (!clipboardMode.value || !clipboardPaths.value.length) return
     try {
       const api = getApi()
       let data
       if (clipboardMode.value === 'copy') {
-        ({ data } = await guardedCall(() => api.post('/files/copy', { sources: clipboardPaths.value, destination: fileCurrentPath.value })))
+        ;({ data } = await guardedCall(() => api.post('/files/copy', { sources: clipboardPaths.value, destination: fileCurrentPath.value })))
       } else {
-        ({ data } = await guardedCall(() => api.post('/files/move', { sources: clipboardPaths.value, destination: fileCurrentPath.value })))
+        ;({ data } = await guardedCall(() => api.post('/files/move', { sources: clipboardPaths.value, destination: fileCurrentPath.value })))
       }
       clipboardMode.value = ''
       clipboardPaths.value = []
-      
-      if (data?.job?.job_id && onJobCreated) await onJobCreated()
-      else if (!data?.job?.job_id) alert('Operazione inviata, ma il backend non ha restituito un job')
+      if (data?.job?.job_id && onJobCreated) await onJobCreated(data.job)
     } catch (e) {
-      alert(extractApiError(e, 'Errore incolla'))
+      fileError.value = extractApiError(e, 'Errore incolla')
     }
   }
 
   async function deleteSelected(onJobCreated) {
-    if (!selectedFilePaths.value.length) return alert('Seleziona un elemento')
-    if (!confirm(`Eliminare ${selectedFilePaths.value.length} elemento/i?`)) return
+    if (!selectedFilePaths.value.length) return
     try {
       const api = getApi()
       const { data } = await guardedCall(() => api.post('/files/delete', { paths: selectedFilePaths.value }))
       selectedFilePaths.value = []
-      if (data?.job?.job_id && onJobCreated) await onJobCreated()
-      else if (!data?.job?.job_id) alert('Eliminazione inviata, ma il backend non ha restituito un job')
+      if (onJobCreated) await onJobCreated({ deleted: data?.deleted, errors: data?.errors })
+      await loadFileList(fileCurrentPath.value, { addToHistory: false })
     } catch (e) {
-      alert(extractApiError(e, 'Errore cancellazione'))
+      fileError.value = extractApiError(e, 'Errore cancellazione')
     }
   }
 
-  async function compressSelected(onJobCreated) {
-    if (!selectedFilePaths.value.length) return alert('Seleziona un elemento')
-    const archiveName = prompt('Nome archivio zip:', 'archivio')
-    if (!archiveName) return
+  async function compressSelected(archiveName, onJobCreated) {
+    if (!selectedFilePaths.value.length || !archiveName) return
     try {
       const api = getApi()
       const { data } = await guardedCall(() => api.post('/files/compress', {
@@ -195,14 +275,27 @@ export function useFileManager() {
         destination: fileCurrentPath.value,
         archive_name: archiveName
       }))
-      if (data?.job?.job_id && onJobCreated) await onJobCreated()
-      else if (!data?.job?.job_id) alert('Compressione inviata, ma il backend non ha restituito un job')
+      if (data?.job?.job_id && onJobCreated) await onJobCreated(data.job)
     } catch (e) {
-      alert(extractApiError(e, 'Errore compressione'))
+      fileError.value = extractApiError(e, 'Errore compressione')
     }
   }
 
-  // 4. Upload a Chunk (Il blocco più pesante!)
+  async function uncompressEntry(entry, onJobCreated) {
+    if (!entry?.path) return
+    try {
+      const api = getApi()
+      const { data } = await guardedCall(() => api.post('/files/uncompress', {
+        path: entry.path,
+        destination: fileCurrentPath.value,
+      }))
+      if (data?.job?.job_id && onJobCreated) await onJobCreated(data.job)
+    } catch (e) {
+      fileError.value = extractApiError(e, 'Errore decompressione')
+    }
+  }
+
+  // 4. Upload a Chunk con progress per file
   async function uploadFiles(ev, onJobCreated) {
     const files = [...(ev.target.files || [])]
     if (!files.length) return
@@ -210,12 +303,16 @@ export function useFileManager() {
     const api = getApi()
 
     for (const file of files) {
+      const queueEntry = { name: file.name, progress: 0, status: 'uploading', error: '' }
+      uploadQueue.value = [...uploadQueue.value, queueEntry]
+      const qi = uploadQueue.value.length - 1
+
       try {
         const initResp = await guardedCall(() => api.post('/files/upload/init', {
           filename: file.name,
           total_size: file.size,
           path: fileCurrentPath.value,
-          chunk_size: 8 * 1024 * 1024
+          chunk_size: 8 * 1024 * 1024,
         }))
 
         const sessionId = initResp.data?.session_id
@@ -232,24 +329,32 @@ export function useFileManager() {
 
           await guardedCall(() => api.post('/files/upload/chunk', form, {
             headers: { 'Content-Type': 'multipart/form-data' },
-            timeout: 120000
+            timeout: 120000,
           }))
           offset += blob.size
+          const pct = file.size > 0 ? Math.round((offset / file.size) * 100) : 100
+          uploadQueue.value[qi] = { ...uploadQueue.value[qi], progress: pct }
         }
 
-        await guardedCall(() => api.post('/files/upload/finalize', { session_id: sessionId }))
-        
-        if (onJobCreated) await onJobCreated()
+        const finalResp = await guardedCall(() => api.post('/files/upload/finalize', { session_id: sessionId }))
+        uploadQueue.value[qi] = { ...uploadQueue.value[qi], progress: 100, status: 'done' }
+
+        if (onJobCreated) await onJobCreated({ filename: file.name, path: finalResp?.data?.path })
         await loadFileList(fileCurrentPath.value, { addToHistory: false })
       } catch (e) {
-        alert(`${file.name}: ${extractApiError(e, 'Errore upload chunked')}`)
-        break
+        const errMsg = extractApiError(e, 'Errore upload')
+        uploadQueue.value[qi] = { ...uploadQueue.value[qi], status: 'error', error: errMsg }
       }
     }
     ev.target.value = ''
+
+    // Rimuovi le voci completate dopo 4s
+    setTimeout(() => {
+      uploadQueue.value = uploadQueue.value.filter(q => q.status !== 'done')
+    }, UPLOAD_DONE_CLEAR_MS)
   }
 
-  // 5. Preview dei file (Audio, Immagini, Video)
+  // 5. Preview dei file
   function isPreviewable(entry) {
     return ['image', 'audio', 'video'].includes(entry?.type)
   }
@@ -289,7 +394,7 @@ export function useFileManager() {
       previewUrl.value = previewObjectUrl
     } catch (e) {
       closePreview()
-      alert(extractApiError(e, 'Errore apertura file'))
+      fileError.value = extractApiError(e, 'Errore apertura file')
     } finally {
       previewLoading.value = false
     }
@@ -303,7 +408,7 @@ export function useFileManager() {
     if (isPreviewable(entry)) openPreview(entry)
   }
 
-  // 6. Menu a Tendina e Callback Form
+  // 6. Menu e Dettagli
   function openFileMenu(entry) {
     if (!entry) return
     fileMenuTarget.value = entry
@@ -315,35 +420,45 @@ export function useFileManager() {
     fileMenuTarget.value = null
   }
 
-  async function showDetails(path) {
+  async function fetchDetails(path) {
     try {
       const api = getApi()
       const { data } = await guardedCall(() => api.post('/files/details', { path }))
-      alert(`Dettagli:\nNome: ${data.name}\nTipo: ${data.type}\nSize: ${data.size}\nPath: ${data.path}`)
+      return data
     } catch (e) {
-      alert(extractApiError(e, 'Errore dettagli'))
+      fileError.value = extractApiError(e, 'Errore dettagli')
+      return null
     }
   }
 
   return {
     // Stato
-    fileCurrentPath, fileEntries, selectedFilePaths, newFolderName,
-    clipboardMode, clipboardPaths, fileMenuOpen, fileMenuTarget,
+    fileCurrentPath, fileEntries, fileLoading, fileError,
+    selectedFilePaths, newFolderName,
+    clipboardMode, clipboardPaths,
+    fileMenuOpen, fileMenuTarget,
     previewOpen, previewFile, previewUrl, previewLoading,
+    fileSearch, fileSortBy, fileSortOrder, fileFilterType,
+    uploadQueue,
 
     // Computed
     selectedCount, canGoBack, canGoForward, fileParentPath, breadcrumbs,
+    filteredEntries,
 
-    // Metodi Navigazione e Ricarica
+    // Navigazione
     loadFileRoots, loadFileList, goFileHome, goFileUp, goFileBack, goFileForward,
-    toggleFileSelection, openEntry, 
+    toggleFileSelection, selectAll, clearSelection, openEntry,
 
-    // Metodi Azione File
-    createFolder, renameEntry, moveSelected, copySelected, pasteClipboard,
-    deleteSelected, compressSelected, uploadFiles, showDetails,
+    // Azioni file
+    createFolder, renameEntry,
+    moveSelected, copySelected, clearClipboard, pasteClipboard,
+    deleteSelected, compressSelected, uncompressEntry,
+    uploadFiles,
+    fetchDetails,
 
-    // Metodi Preview e Menu
-    isPreviewable, openPreview, closePreview, revokePreviewUrl, openFileMenu, closeFileMenu
+    // Preview e Menu
+    isPreviewable, openPreview, closePreview, revokePreviewUrl,
+    openFileMenu, closeFileMenu,
   }
 }
 

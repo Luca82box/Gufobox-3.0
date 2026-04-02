@@ -311,39 +311,48 @@ class TestStandbyLogic:
     def test_is_in_standby_initial_false(self):
         """By default standby should be False at startup."""
         import core.hardware as hw
-        hw._in_standby = False
+        hw._standby_state = hw.STANDBY_AWAKE
         assert hw.is_in_standby() is False
 
     def test_perform_standby_sets_flag(self):
-        """perform_standby() must set _in_standby to True."""
+        """perform_standby() must set is_in_standby() to True."""
         import core.hardware as hw
-        hw._in_standby = False
+        hw._standby_state = hw.STANDBY_AWAKE
         with patch("core.hardware.run_cmd"), \
              patch("core.hardware.amp_off"), \
-             patch("core.hardware.eventlet") as mock_ev:
+             patch("core.hardware.eventlet") as mock_ev, \
+             patch("core.media.stop_player"), \
+             patch("hw.battery.play_ai_notification"), \
+             patch.object(hw.bus, "emit_notification"), \
+             patch.object(hw.bus, "request_emit"), \
+             patch.object(hw.bus, "mark_dirty"):
             mock_ev.sleep = MagicMock()
             hw.perform_standby()
-        assert hw._in_standby is True
+        assert hw.is_in_standby() is True
 
     def test_wake_from_standby_clears_flag(self):
-        """wake_from_standby() must set _in_standby to False."""
+        """wake_from_standby() must set is_in_standby() to False."""
         import core.hardware as hw
-        hw._in_standby = True
+        hw._standby_state = hw.STANDBY_STANDBY
         with patch("core.hardware.run_cmd"), \
-             patch("core.hardware.amp_on"):
+             patch("core.hardware.amp_on"), \
+             patch("hw.battery.play_ai_notification"), \
+             patch.object(hw.bus, "request_emit"), \
+             patch.object(hw.bus, "mark_dirty"):
             hw.wake_from_standby()
-        assert hw._in_standby is False
+        assert hw.is_in_standby() is False
 
     def test_alarm_worker_wakes_from_standby(self):
-        """_alarm_worker calls wake_from_standby when standby is active."""
+        """_alarm_worker calls _wake_for_alarm when standby is active."""
         import core.hardware as hw
-        hw._in_standby = True
+        hw._standby_state = hw.STANDBY_STANDBY
+        hw._alarm_last_fired.clear()
 
         wake_called = []
 
-        def _mock_wake():
+        def _mock_wake_for_alarm():
             wake_called.append(True)
-            hw._in_standby = False
+            hw._standby_state = hw.STANDBY_ALARM_ACTIVE
 
         from unittest.mock import patch as _patch
         from datetime import datetime as _dt
@@ -357,13 +366,15 @@ class TestStandbyLogic:
             if sleep_calls["n"] > 1:
                 raise StopIteration
 
-        with _patch("core.hardware.is_in_standby", side_effect=[True, False]), \
-             _patch("core.hardware.wake_from_standby", side_effect=_mock_wake), \
+        with _patch("core.hardware._wake_for_alarm", side_effect=_mock_wake_for_alarm), \
              _patch("core.hardware.eventlet") as mock_ev, \
              _patch("core.hardware.alarms_list", [
-                 {"enabled": True, "hour": 0, "minute": 0, "days": list(range(7)), "target": "test.mp3"}
-             ]):
-            # First sleep passes (loop iteration), second stops the loop
+                 {"enabled": True, "hour": 0, "minute": 0, "days": list(range(7)),
+                  "target": "test.mp3", "id": "alarm-legacy"}
+             ]), \
+             _patch("core.media.start_player"), \
+             _patch.object(hw.bus, "emit_notification"), \
+             _patch.object(hw.bus, "request_emit"):
             mock_ev.sleep = MagicMock(side_effect=_mock_sleep)
             try:
                 with _patch("core.hardware.datetime") as mock_dt:
@@ -372,7 +383,7 @@ class TestStandbyLogic:
             except StopIteration:
                 pass
 
-        assert len(wake_called) > 0, "wake_from_standby should have been called"
+        assert len(wake_called) > 0, "wake_for_alarm should have been called"
 
 
 # ─── E) Network POST /scan alias ─────────────────────────────────────────────

@@ -130,17 +130,21 @@ def build_public_snapshot():
     if bus.cached_public_json: 
         return bus.cached_public_json
     # Include standby state (in-memory, not persisted)
+    in_standby = False
+    standby_state = "awake"
     try:
-        from core.hardware import is_in_standby
+        from core.hardware import is_in_standby, get_standby_state
         in_standby = is_in_standby()
+        standby_state = get_standby_state()
     except Exception:
-        in_standby = False
+        pass
     payload = {
         "state": state, 
         "media_runtime": media_runtime, 
         "ai_runtime": ai_runtime, 
         "led_runtime": led_runtime,
         "in_standby": in_standby,
+        "standby_state": standby_state,
     }
     bus.cached_public_json = payload
     return payload

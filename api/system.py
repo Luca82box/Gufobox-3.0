@@ -7,7 +7,7 @@ from datetime import datetime
 from flask import Blueprint, request, jsonify
 from core.state import media_runtime, alarms_list, bus, now_ts
 from core.utils import run_cmd, t, log
-from core.hardware import perform_standby, is_in_standby
+from core.hardware import perform_standby, is_in_standby, get_standby_state
 from config import BASE_DIR, BACKUP_DIR, OTA_LOG_FILE, OTA_STATE_FILE
 
 # Creiamo il Blueprint per le rotte di sistema
@@ -436,4 +436,7 @@ def api_rollback():
 @system_bp.route("/system/standby", methods=["GET"])
 def api_standby_status():
     """Restituisce lo stato standby applicativo corrente."""
-    return jsonify({"in_standby": is_in_standby()})
+    return jsonify({
+        "in_standby": is_in_standby(),
+        "standby_state": get_standby_state(),
+    })

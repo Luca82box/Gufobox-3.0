@@ -44,6 +44,16 @@ def api_network_status():
 @network_bp.route("/network/scan", methods=["GET"])
 def api_network_scan():
     """Scansiona le reti Wi-Fi vicine usando nmcli (NetworkManager)"""
+    return _do_network_scan()
+
+
+@network_bp.route("/network/scan", methods=["POST"])
+def api_network_scan_post():
+    """POST alias per /network/scan (compatibile con nuovi client)."""
+    return _do_network_scan()
+
+
+def _do_network_scan():
     code, stdout, _ = run_cmd(["sudo", "nmcli", "-t", "-f", "SSID,SECURITY,SIGNAL", "dev", "wifi"])
     networks = []
     
@@ -286,6 +296,53 @@ def api_bluetooth_scan():
         return jsonify({"devices": [], "error": "Scansione Bluetooth non disponibile"})
 
     return jsonify({"devices": devices})
+
+
+@network_bp.route("/bluetooth/unblock", methods=["POST"])
+def api_bluetooth_unblock():
+    """
+    Sblocca il controller Bluetooth tramite rfkill e accende il controller.
+    Utile quando il BT è stato bloccato software (es. durante lo standby).
+    """
+    errors = []
+    code_rf, _, err_rf = run_cmd(["sudo", "rfkill", "unblock", "bluetooth"], timeout=5)
+    if code_rf != 0:
+        errors.append(f"rfkill: {err_rf}")
+        log(f"Bluetooth unblock rfkill fallito: {err_rf}", "warning")
+
+    code_bt, _, err_bt = run_cmd(["bluetoothctl", "power", "on"], timeout=5)
+    if code_bt != 0:
+        errors.append(f"bluetoothctl: {err_bt}")
+        log(f"Bluetooth power on fallito: {err_bt}", "warning")
+
+    if errors:
+        return jsonify({"status": "partial", "error": "Sblocco Bluetooth parzialmente riuscito"})
+
+    log("Bluetooth sbloccato e acceso", "info")
+    return jsonify({"status": "ok"})
+
+
+@network_bp.route("/bluetooth/pair", methods=["POST"])
+def api_bluetooth_pair():
+    """
+    Accoppia (pair) un dispositivo Bluetooth senza connetterlo.
+    Payload: {"mac": "AA:BB:CC:DD:EE:FF"}
+    Utile per registrare un device prima di connetterlo.
+    """
+    data = request.get_json(silent=True) or {}
+    mac = data.get("mac", "").strip()
+    if not mac:
+        return jsonify({"error": "MAC mancante"}), 400
+
+    log(f"Bluetooth: pair con {mac}", "info")
+    code_p, _, err_p = run_cmd(["bluetoothctl", "pair", mac], timeout=20)
+    if code_p != 0:
+        log(f"Bluetooth: pair {mac} fallito: {err_p}", "warning")
+        return jsonify({"error": f"Accoppiamento fallito per {mac}. Controlla che il dispositivo sia in modalità pairing."}), 500
+
+    run_cmd(["bluetoothctl", "trust", mac], timeout=5)
+    log(f"Bluetooth: {mac} accoppiato e trusted", "info")
+    return jsonify({"status": "ok", "mac": mac})
 
 @network_bp.route("/bluetooth/connect", methods=["POST"])
 def api_bluetooth_connect():

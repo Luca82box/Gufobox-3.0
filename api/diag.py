@@ -131,7 +131,9 @@ def api_diag_summary():
     """
     Riepilogo diagnostico sintetico dello stato del sistema.
     """
-    from core.state import state, media_runtime, led_runtime
+    import os as _os
+    from core.state import state, media_runtime, led_runtime, alarms_list, jobs_state
+    from config import API_VERSION, BACKUP_DIR, OTA_STATE_FILE
 
     cpu_temp = _cpu_temperature()
     ram = _ram_info()
@@ -145,16 +147,74 @@ def api_diag_summary():
     if disk.get("percent") and disk["percent"] > 90:
         warnings.append(f"Disco quasi pieno: {disk['percent']}%")
 
+    # IP corrente (best-effort)
+    ip = None
+    try:
+        import socket
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+    except Exception:
+        pass
+
+    # OTA state (best-effort)
+    ota_status = "idle"
+    ota_running = False
+    try:
+        import json
+        if _os.path.exists(OTA_STATE_FILE):
+            with open(OTA_STATE_FILE, "r", encoding="utf-8") as f:
+                ota_data = json.load(f)
+            ota_status = ota_data.get("status", "idle")
+            ota_running = ota_data.get("status") == "running"
+    except Exception:
+        pass
+
+    # Backup count (best-effort)
+    backup_count = 0
+    try:
+        if _os.path.isdir(BACKUP_DIR):
+            backup_count = sum(
+                1 for n in _os.listdir(BACKUP_DIR)
+                if _os.path.isdir(_os.path.join(BACKUP_DIR, n))
+            )
+    except Exception:
+        pass
+
+    # Standby state
+    in_standby = False
+    try:
+        from core.hardware import is_in_standby
+        in_standby = is_in_standby()
+    except Exception:
+        pass
+
+    # Counts
+    active_jobs = sum(
+        1 for j in jobs_state.values()
+        if j.get("status") not in ("done", "error", "canceled")
+    )
+    alarm_count = len(alarms_list)
+
     return jsonify({
         "ok": len(warnings) == 0,
         "warnings": warnings,
+        "api_version": API_VERSION,
+        "ip": ip,
         "cpu_temp_celsius": cpu_temp,
         "ram_percent": ram.get("percent"),
         "disk_percent": disk.get("percent"),
+        "uptime_seconds": _uptime_seconds(),
         "player_running": media_runtime.get("player_running", False),
+        "player_mode": media_runtime.get("current_mode", "idle"),
         "led_master_enabled": led_runtime.get("master_enabled", True),
         "pin_enabled": state.get("pin_enabled", True),
-        "uptime_seconds": _uptime_seconds(),
+        "in_standby": in_standby,
+        "ota_status": ota_status,
+        "ota_running": ota_running,
+        "backup_count": backup_count,
+        "active_jobs": active_jobs,
+        "alarm_count": alarm_count,
     })
 
 

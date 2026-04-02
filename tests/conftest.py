@@ -6,9 +6,16 @@ non tenti di creare /home/gufobox o altre directory sistema durante i test.
 """
 import os
 import sys
+from unittest.mock import MagicMock
 
 # Aggiunge la root del progetto al path prima di qualsiasi import
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Mock hardware-specific modules that are not available in CI/test environments:
+# gpiozero (hw/amp.py, hw/buttons.py), smbus2 (hw/battery.py)
+for _hw_mod in ("gpiozero", "smbus2"):
+    if _hw_mod not in sys.modules:
+        sys.modules[_hw_mod] = MagicMock()
 
 # Patch os.makedirs per i test: tollera i permessi negati invece di crashare
 _orig_makedirs = os.makedirs

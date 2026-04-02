@@ -8,7 +8,8 @@ from copy import deepcopy
 from config import (
     STATE_FILE, MEDIA_RUNTIME_FILE, LED_RUNTIME_FILE, AI_RUNTIME_FILE,
     ALARMS_FILE, JOB_STATE_FILE, RFID_MAP_FILE, RFID_PROFILES_FILE,
-    RSS_RUNTIME_FILE, STATE_SAVE_DEBOUNCE_SEC
+    RSS_RUNTIME_FILE, STATE_SAVE_DEBOUNCE_SEC,
+    OTA_STATE_FILE, BACKUP_DIR,
 )
 from core.extensions import socketio
 from core.utils import log
@@ -128,11 +129,18 @@ def build_public_snapshot():
     # Se abbiamo già calcolato il JSON di recente, usiamo la cache!
     if bus.cached_public_json: 
         return bus.cached_public_json
+    # Include standby state (in-memory, not persisted)
+    try:
+        from core.hardware import is_in_standby
+        in_standby = is_in_standby()
+    except Exception:
+        in_standby = False
     payload = {
         "state": state, 
         "media_runtime": media_runtime, 
         "ai_runtime": ai_runtime, 
-        "led_runtime": led_runtime
+        "led_runtime": led_runtime,
+        "in_standby": in_standby,
     }
     bus.cached_public_json = payload
     return payload
@@ -143,6 +151,31 @@ def build_admin_snapshot():
     payload["rfid_map"] = rfid_map
     payload["rfid_profiles"] = rfid_profiles
     payload["rss_runtime"] = rss_runtime
+
+    # Include OTA state and backup count in admin snapshot
+    try:
+        import json as _json
+        if os.path.exists(OTA_STATE_FILE):
+            with open(OTA_STATE_FILE, "r", encoding="utf-8") as _f:
+                _ota = _json.load(_f)
+            _ota["running"] = _ota.get("status") == "running"
+            payload["ota_state"] = _ota
+        else:
+            payload["ota_state"] = {"status": "idle", "running": False}
+    except Exception:
+        payload["ota_state"] = {"status": "idle", "running": False}
+
+    try:
+        if os.path.isdir(BACKUP_DIR):
+            payload["backup_count"] = sum(
+                1 for n in os.listdir(BACKUP_DIR)
+                if os.path.isdir(os.path.join(BACKUP_DIR, n))
+            )
+        else:
+            payload["backup_count"] = 0
+    except Exception:
+        payload["backup_count"] = 0
+
     return payload
 
 # =========================================================

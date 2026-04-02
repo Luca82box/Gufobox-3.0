@@ -7,7 +7,7 @@ from datetime import datetime
 from flask import Blueprint, request, jsonify
 from core.state import media_runtime, alarms_list, bus, now_ts
 from core.utils import run_cmd, t, log
-from core.hardware import perform_standby
+from core.hardware import perform_standby, is_in_standby
 from config import BASE_DIR, BACKUP_DIR, OTA_LOG_FILE, OTA_STATE_FILE
 
 # Creiamo il Blueprint per le rotte di sistema
@@ -135,14 +135,34 @@ def _ota_log(msg):
     log(f"[OTA] {msg}", "info")
 
 
+_OTA_STATE_DEFAULT = {
+    "running": False,
+    "status": "idle",
+    "mode": None,
+    "started_at": None,
+    "finished_at": None,
+    "progress_percent": None,
+    "description": None,
+    "error": None,
+    "last_error": None,
+}
+
+
 def _load_ota_state():
     if os.path.exists(OTA_STATE_FILE):
         try:
             with open(OTA_STATE_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+            # Backfill any missing keys from the default (schema migration)
+            for k, v in _OTA_STATE_DEFAULT.items():
+                if k not in data:
+                    data[k] = v
+            # Derive `running` from status so callers can always rely on it
+            data["running"] = data.get("status") == "running"
+            return data
         except Exception:
             pass
-    return {"status": "idle", "mode": None, "started_at": None, "finished_at": None, "error": None}
+    return dict(_OTA_STATE_DEFAULT)
 
 
 def _save_ota_state(state_dict):
@@ -176,24 +196,39 @@ def _create_backup():
 def _run_ota(mode):
     """Esegue l'aggiornamento in un thread separato."""
     ota_state = _load_ota_state()
-    ota_state["status"] = "running"
-    ota_state["mode"] = mode
-    ota_state["started_at"] = datetime.now().isoformat()
-    ota_state["finished_at"] = None
-    ota_state["error"] = None
+    ota_state.update({
+        "running": True,
+        "status": "running",
+        "mode": mode,
+        "started_at": datetime.now().isoformat(),
+        "finished_at": None,
+        "progress_percent": 0,
+        "description": "Avvio aggiornamento...",
+        "error": None,
+        "last_error": None,
+    })
     _save_ota_state(ota_state)
 
+    def _progress(pct, desc):
+        ota_state["progress_percent"] = pct
+        ota_state["description"] = desc
+        _save_ota_state(ota_state)
+        _ota_log(f"[{pct}%] {desc}")
+
     try:
+        _progress(5, "Creazione backup pre-aggiornamento...")
         backup_name = _create_backup()
         if not backup_name:
             raise RuntimeError("Backup fallito, aggiornamento annullato per sicurezza")
+        _progress(15, f"Backup creato: {backup_name}")
 
         if mode == "app":
-            _ota_log("Modalità: aggiornamento app (git pull + pip install)")
+            _progress(20, "Modalità app — git pull in corso...")
             code, out, err = run_cmd(["git", "pull", "--ff-only"], cwd=BASE_DIR, timeout=120)
             _ota_log(f"git pull: code={code} out={out} err={err}")
             if code != 0:
                 raise RuntimeError(f"git pull fallito: {err}")
+            _progress(60, "git pull completato — installazione dipendenze...")
             req_file = os.path.join(BASE_DIR, "requirements.txt")
             if os.path.exists(req_file):
                 code, out, err = run_cmd(
@@ -202,29 +237,38 @@ def _run_ota(mode):
                 _ota_log(f"pip install: code={code}")
                 if code != 0:
                     _ota_log(f"Attenzione pip install: {err}")
+            _progress(90, "Dipendenze aggiornate")
 
         elif mode == "system_safe":
-            _ota_log("Modalità: aggiornamento sistema (apt-get)")
-            for cmd in [
-                ["sudo", "apt-get", "update", "-y"],
-                ["sudo", "apt-get", "full-upgrade", "-y"],
-                ["sudo", "apt-get", "autoremove", "-y"],
-            ]:
+            steps = [
+                (["sudo", "apt-get", "update", "-y"], 30, "apt-get update..."),
+                (["sudo", "apt-get", "full-upgrade", "-y"], 70, "apt-get full-upgrade..."),
+                (["sudo", "apt-get", "autoremove", "-y"], 90, "apt-get autoremove..."),
+            ]
+            for cmd, pct, desc in steps:
+                _progress(pct - 10, desc)
                 code, out, err = run_cmd(cmd, timeout=300)
                 _ota_log(f"{' '.join(cmd)}: code={code}")
                 if code != 0:
                     _ota_log(f"Avviso: {err}")
+                _progress(pct, f"Completato: {' '.join(cmd[:3])}")
 
         else:
             raise RuntimeError(f"Modalità OTA non supportata: {mode}")
 
         ota_state["status"] = "done"
+        ota_state["running"] = False
+        ota_state["progress_percent"] = 100
+        ota_state["description"] = "Aggiornamento completato con successo!"
         _ota_log("Aggiornamento completato con successo!")
         bus.emit_notification("Aggiornamento completato! ✅", "success")
 
     except Exception as e:
         ota_state["status"] = "error"
+        ota_state["running"] = False
         ota_state["error"] = str(e)
+        ota_state["last_error"] = str(e)
+        ota_state["description"] = f"Errore: {e}"
         _ota_log(f"ERRORE OTA: {e}")
         bus.emit_notification(f"Errore aggiornamento: {e}", "error")
     finally:
@@ -383,3 +427,13 @@ def api_rollback():
     rb_thread = threading.Thread(target=_do_rollback, daemon=True)
     rb_thread.start()
     return jsonify({"status": "started", "backup_name": trusted_name})
+
+
+# =========================================================
+# STANDBY — Stato e controllo
+# =========================================================
+
+@system_bp.route("/system/standby", methods=["GET"])
+def api_standby_status():
+    """Restituisce lo stato standby applicativo corrente."""
+    return jsonify({"in_standby": is_in_standby()})

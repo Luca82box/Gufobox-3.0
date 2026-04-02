@@ -38,6 +38,16 @@
           <span class="nav-label">Gufetto</span>
         </button>
 
+        <button @click="currentTab = 'rfid'" :class="{ active: currentTab === 'rfid' }">
+          <span class="nav-icon">🏷️</span>
+          <span class="nav-label">Statuine</span>
+        </button>
+
+        <button @click="currentTab = 'led'" :class="{ active: currentTab === 'led' }">
+          <span class="nav-icon">💡</span>
+          <span class="nav-label">LED</span>
+        </button>
+
         <button @click="currentTab = 'system'" :class="{ active: currentTab === 'system' }">
           <span class="nav-icon">⚙️</span>
           <span class="nav-label">Sistema</span>
@@ -69,7 +79,13 @@
           
           <AdminAiSettings v-if="currentTab === 'ai'" />
 
+          <AdminRfid v-if="currentTab === 'rfid'" />
+
+          <AdminLed v-if="currentTab === 'led'" />
+
           <div v-if="currentTab === 'system'" class="system-group">
+            <AdminSystem />
+            <hr class="system-divider" />
             <AdminNetwork />
             <hr class="system-divider" />
             <AdminBluetooth />
@@ -95,6 +111,9 @@ import AdminStats from './admin/AdminStats.vue'
 import AdminAiSettings from './admin/AdminAiSettings.vue'
 import AdminNetwork from './admin/AdminNetwork.vue'
 import AdminBluetooth from './admin/AdminBluetooth.vue'
+import AdminRfid from './admin/AdminRfid.vue'
+import AdminLed from './admin/AdminLed.vue'
+import AdminSystem from './admin/AdminSystem.vue'
 
 const router = useRouter()
 const currentTab = ref('dashboard') // Imposta la pagina iniziale

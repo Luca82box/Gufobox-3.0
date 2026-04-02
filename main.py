@@ -36,6 +36,7 @@ from api.ai import ai_bp
 from api.network import network_bp
 from api.settings import settings_bp
 from api.voice import voice_bp  # <-- NUOVO: API per la registrazione vocale
+from api.led import led_bp
 
 def create_app():
     """Configura e assembla l'applicazione Flask principale"""
@@ -59,6 +60,7 @@ def create_app():
     app.register_blueprint(network_bp, url_prefix='/api')
     app.register_blueprint(settings_bp, url_prefix='/api')
     app.register_blueprint(voice_bp, url_prefix='/api') # <-- NUOVO: Registrato
+    app.register_blueprint(led_bp, url_prefix='/api')
 
     # Colleghiamo Socket.io all'app Flask per le comunicazioni in tempo reale
     socketio.init_app(app, cors_allowed_origins="*", async_mode="eventlet", ping_interval=25, ping_timeout=20)

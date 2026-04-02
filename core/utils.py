@@ -56,16 +56,16 @@ def secure_open_read(path, allowed_roots):
 # =========================================================
 LANG_STRINGS = {
     "it": {
-        "ok_standby": "Standby attivato", "ok_reboot": "Riavvio avviato"
+        "ok_standby": "Standby attivato", "ok_reboot": "Riavvio avviato", "ok_shutdown": "Spegnimento avviato"
     },
     "en": {
-        "ok_standby": "Standby activated", "ok_reboot": "Reboot started"
+        "ok_standby": "Standby activated", "ok_reboot": "Reboot started", "ok_shutdown": "Shutdown started"
     },
     "es": {
-        "ok_standby": "Modo de espera activado", "ok_reboot": "Reinicio iniciado"
+        "ok_standby": "Modo de espera activado", "ok_reboot": "Reinicio iniciado", "ok_shutdown": "Apagado iniciado"
     },
     "de": {
-        "ok_standby": "Standby aktiviert", "ok_reboot": "Neustart gestartet"
+        "ok_standby": "Standby aktiviert", "ok_reboot": "Neustart gestartet", "ok_shutdown": "Herunterfahren gestartet"
     }
 }
 

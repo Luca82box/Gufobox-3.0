@@ -87,6 +87,37 @@
       </div>
     </div>
 
+    <!-- HOTSPOT -->
+    <div class="hotspot-card">
+      <div class="card-header">
+        <h3>Hotspot Wi-Fi 📡</h3>
+      </div>
+      <p class="hotspot-desc">
+        Se non c'è una rete Wi-Fi disponibile, puoi attivare il punto di accesso GufoBox 
+        per connetterti direttamente con uno smartphone o tablet.
+      </p>
+      <div class="hotspot-status" :class="{ active: hotspotActive }">
+        <span v-if="hotspotActive">✅ Hotspot attivo — SSID: <strong>{{ hotspotSsid }}</strong></span>
+        <span v-else>⭕ Hotspot non attivo</span>
+      </div>
+      <div class="hotspot-actions">
+        <button
+          class="btn-hotspot-start"
+          @click="startHotspot"
+          :disabled="hotspotLoading || hotspotActive"
+        >
+          {{ hotspotLoading ? 'Avvio...' : '▶ Attiva Hotspot' }}
+        </button>
+        <button
+          class="btn-hotspot-stop"
+          @click="stopHotspot"
+          :disabled="hotspotLoading || !hotspotActive"
+        >
+          ⏹ Disattiva
+        </button>
+      </div>
+    </div>
+
   </div>
 </template>
 
@@ -109,14 +140,20 @@ const selectedNetwork = ref(null)
 const wifiPassword = ref('')
 const isConnecting = ref(false)
 
+// Hotspot
+const hotspotActive = ref(false)
+const hotspotSsid = ref('')
+const hotspotLoading = ref(false)
+
 // 1. Carica lo stato attuale
 async function loadNetworkStatus() {
   loadingStatus.value = true
   try {
     const api = getApi()
     const { data } = await guardedCall(() => api.get('/network/status'))
-    // Il backend dovrebbe restituire { connected: true, ssid: '...', ip: '...', signal: 85 }
     currentNetwork.value = data?.connected ? data : null
+    hotspotActive.value = data?.hotspot_active || false
+    hotspotSsid.value = data?.hotspot_ssid || ''
   } catch (e) {
     console.error('Errore stato rete:', extractApiError(e))
   } finally {
@@ -180,6 +217,33 @@ onMounted(() => {
   loadNetworkStatus()
   // Non scansioniamo in automatico per non bloccare il chip Wi-Fi appena si apre la pagina
 })
+
+// Hotspot
+async function startHotspot() {
+  hotspotLoading.value = true
+  try {
+    const api = getApi()
+    await guardedCall(() => api.post('/network/hotspot/start'))
+    await loadNetworkStatus()
+  } catch (e) {
+    alert(extractApiError(e, 'Errore avvio hotspot'))
+  } finally {
+    hotspotLoading.value = false
+  }
+}
+
+async function stopHotspot() {
+  hotspotLoading.value = true
+  try {
+    const api = getApi()
+    await guardedCall(() => api.post('/network/hotspot/stop'))
+    await loadNetworkStatus()
+  } catch (e) {
+    alert(extractApiError(e, 'Errore arresto hotspot'))
+  } finally {
+    hotspotLoading.value = false
+  }
+}
 </script>
 
 <style scoped>
@@ -362,6 +426,79 @@ onMounted(() => {
 }
 
 .btn-connect:disabled {
+  background: #555;
+  color: #888;
+  cursor: not-allowed;
+}
+
+/* Hotspot */
+.hotspot-card {
+  background: #2a2a35;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+}
+
+.hotspot-card .card-header h3 {
+  margin-top: 0;
+  color: #ffd27b;
+  border-bottom: 1px solid #3a3a48;
+  padding-bottom: 10px;
+}
+
+.hotspot-desc {
+  color: #aaa;
+  font-size: 0.9rem;
+  margin: 10px 0;
+}
+
+.hotspot-status {
+  background: #1e1e26;
+  border-radius: 8px;
+  padding: 12px 15px;
+  margin: 10px 0;
+  color: #aaa;
+  border-left: 4px solid #555;
+}
+
+.hotspot-status.active {
+  border-left-color: #4caf50;
+  color: #fff;
+}
+
+.hotspot-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.btn-hotspot-start {
+  background: #4caf50;
+  color: white;
+  border: none;
+  padding: 10px 18px;
+  border-radius: 8px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.btn-hotspot-start:disabled {
+  background: #555;
+  color: #888;
+  cursor: not-allowed;
+}
+
+.btn-hotspot-stop {
+  background: #e53935;
+  color: white;
+  border: none;
+  padding: 10px 18px;
+  border-radius: 8px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.btn-hotspot-stop:disabled {
   background: #555;
   color: #888;
   cursor: not-allowed;

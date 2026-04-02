@@ -3,6 +3,7 @@ import eventlet
 from flask import Blueprint, request, jsonify
 from core.utils import run_cmd, log
 from core.state import bus
+from config import HOTSPOT_SSID, HOTSPOT_PASS, HOTSPOT_CONN_NAME
 
 network_bp = Blueprint('network', __name__)
 
@@ -11,18 +12,33 @@ network_bp = Blueprint('network', __name__)
 # =========================================================
 @network_bp.route("/network/status", methods=["GET"])
 def api_network_status():
-    """Restituisce lo stato attuale della connessione Wi-Fi"""
+    """Restituisce lo stato attuale della connessione Wi-Fi e hotspot"""
     code, stdout, _ = run_cmd(["iwgetid", "-r"])
     ssid = stdout.strip() if code == 0 else None
     
     code_ip, stdout_ip, _ = run_cmd(["hostname", "-I"])
     ip = stdout_ip.split()[0] if code_ip == 0 and stdout_ip else "Sconosciuto"
-    
+
+    # Stato hotspot: controlla se la connessione AP è attiva
+    hotspot_active = False
+    code_h, stdout_h, _ = run_cmd(
+        ["sudo", "nmcli", "-t", "-f", "NAME,TYPE,STATE", "con", "show", "--active"],
+        timeout=5
+    )
+    if code_h == 0:
+        for line in stdout_h.splitlines():
+            parts = line.split(":")
+            if len(parts) >= 3 and parts[0] == HOTSPOT_CONN_NAME and parts[2] == "activated":
+                hotspot_active = True
+                break
+
     return jsonify({
         "connected": bool(ssid),
         "ssid": ssid,
         "ip": ip,
-        "signal": 85 if ssid else 0 # Mock del segnale (da implementare con iwconfig se necessario)
+        "signal": 85 if ssid else 0,
+        "hotspot_active": hotspot_active,
+        "hotspot_ssid": HOTSPOT_SSID if hotspot_active else None,
     })
 
 @network_bp.route("/network/scan", methods=["GET"])
@@ -71,8 +87,75 @@ def api_network_connect():
         return jsonify({"error": f"Errore di connessione: {err}"}), 500
 
 # =========================================================
-# GESTIONE BLUETOOTH — helper interni
+# HOTSPOT (Access Point con nmcli)
 # =========================================================
+
+def _ensure_hotspot_connection():
+    """
+    Crea la connessione nmcli per l'hotspot se non esiste già.
+    Usa 802-11-wireless.mode ap con ipv4.method shared e wpa-psk.
+    """
+    # Controlla se la connessione esiste già
+    code, stdout, _ = run_cmd(
+        ["sudo", "nmcli", "-t", "-f", "NAME", "con", "show"], timeout=5
+    )
+    if code == 0 and HOTSPOT_CONN_NAME in stdout.splitlines():
+        return True  # Già creata
+
+    log(f"Creazione connessione hotspot '{HOTSPOT_CONN_NAME}'...", "info")
+    cmds = [
+        ["sudo", "nmcli", "con", "add", "type", "wifi",
+         "ifname", "wlan0", "con-name", HOTSPOT_CONN_NAME,
+         "autoconnect", "no", "ssid", HOTSPOT_SSID],
+        ["sudo", "nmcli", "con", "modify", HOTSPOT_CONN_NAME,
+         "802-11-wireless.mode", "ap",
+         "802-11-wireless.band", "bg",
+         "ipv4.method", "shared"],
+        ["sudo", "nmcli", "con", "modify", HOTSPOT_CONN_NAME,
+         "wifi-sec.key-mgmt", "wpa-psk",
+         "wifi-sec.psk", HOTSPOT_PASS],
+    ]
+    for cmd in cmds:
+        code, _, err = run_cmd(cmd, timeout=10)
+        if code != 0:
+            log(f"Errore creazione hotspot: {err}", "warning")
+            return False
+    return True
+
+
+@network_bp.route("/network/hotspot/start", methods=["POST"])
+def api_hotspot_start():
+    """Avvia l'hotspot Wi-Fi GufoBox tramite nmcli."""
+    log("Avvio hotspot...", "info")
+    if not _ensure_hotspot_connection():
+        return jsonify({"error": "Impossibile creare la connessione hotspot"}), 500
+
+    code, _, err = run_cmd(
+        ["sudo", "nmcli", "con", "up", HOTSPOT_CONN_NAME], timeout=15
+    )
+    if code == 0:
+        bus.emit_notification(f"Hotspot '{HOTSPOT_SSID}' attivo! 📡", "success")
+        log(f"Hotspot '{HOTSPOT_SSID}' avviato", "info")
+        return jsonify({"status": "ok", "ssid": HOTSPOT_SSID})
+    else:
+        log(f"Errore avvio hotspot: {err}", "warning")
+        return jsonify({"error": "Impossibile avviare l'hotspot. Controlla il log per i dettagli."}), 500
+
+
+@network_bp.route("/network/hotspot/stop", methods=["POST"])
+def api_hotspot_stop():
+    """Ferma l'hotspot Wi-Fi."""
+    log("Arresto hotspot...", "info")
+    code, _, err = run_cmd(
+        ["sudo", "nmcli", "con", "down", HOTSPOT_CONN_NAME], timeout=10
+    )
+    if code == 0:
+        bus.emit_notification("Hotspot disattivato", "info")
+        log("Hotspot disattivato", "info")
+        return jsonify({"status": "ok"})
+    else:
+        log(f"Errore arresto hotspot: {err}", "warning")
+        return jsonify({"error": "Impossibile fermare l'hotspot. Controlla il log per i dettagli."}), 500
 
 def _parse_bt_device_line(line):
     """

@@ -53,6 +53,38 @@
         </div>
       </div>
 
+      <!-- Blocco LED opzionale -->
+      <div class="led-section">
+        <div class="led-toggle" @click="form.led.enabled = !form.led.enabled">
+          <span>💡 Effetto LED per questa statuina</span>
+          <span class="toggle-indicator" :class="{ on: form.led.enabled }">
+            {{ form.led.enabled ? 'ON' : 'OFF' }}
+          </span>
+        </div>
+        <div v-if="form.led.enabled" class="led-config">
+          <div class="led-row">
+            <div class="form-group">
+              <label>Effetto</label>
+              <select v-model="form.led.effect_id">
+                <option v-for="eff in ledEffects" :key="eff.id" :value="eff.id">{{ eff.name }}</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Colore</label>
+              <input type="color" v-model="form.led.color" />
+            </div>
+            <div class="form-group">
+              <label>Luminosità {{ form.led.brightness }}%</label>
+              <input type="range" min="0" max="100" v-model.number="form.led.brightness" />
+            </div>
+            <div class="form-group">
+              <label>Velocità {{ form.led.speed }}%</label>
+              <input type="range" min="0" max="100" v-model.number="form.led.speed" />
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="form-actions">
         <button v-if="isEditing" class="btn-cancel" @click="resetForm">Annulla</button>
         <button class="btn-save" @click="saveMapping" :disabled="!form.uid || !form.target">
@@ -80,6 +112,10 @@
           <div class="rfid-info">
             <h4>{{ uid }}</h4>
             <p class="target-path">{{ data.target }}</p>
+            <p v-if="data.led && data.led.enabled" class="led-badge">
+              💡 {{ data.led.effect_id }}
+              <span class="color-dot" :style="{ background: data.led.color }"></span>
+            </p>
           </div>
 
           <div class="rfid-actions">
@@ -102,6 +138,7 @@ const { getApi, getSocket, guardedCall, extractApiError } = useApi()
 // Stato della mappa RFID
 const rfidMap = ref({})
 const loading = ref(false)
+const ledEffects = ref([])
 
 // Stato del form
 const isEditing = ref(false)
@@ -109,7 +146,14 @@ const isScanning = ref(false)
 const form = reactive({
   uid: '',
   type: 'audio',
-  target: ''
+  target: '',
+  led: {
+    enabled: false,
+    effect_id: 'solid',
+    color: '#ffffff',
+    brightness: 70,
+    speed: 30,
+  }
 })
 
 // 1. Carica le associazioni dal server
@@ -126,16 +170,28 @@ async function loadRfidMap() {
   }
 }
 
+async function loadLedEffects() {
+  try {
+    const api = getApi()
+    const { data } = await guardedCall(() => api.get('/led/effects'))
+    ledEffects.value = data?.effects || []
+  } catch (e) {
+    console.error('Errore caricamento effetti LED:', extractApiError(e))
+  }
+}
+
 // 2. Salva o Aggiorna un'associazione
 async function saveMapping() {
   if (!form.uid.trim() || !form.target.trim()) return
   try {
     const api = getApi()
-    await guardedCall(() => api.post('/rfid/map', {
+    const payload = {
       uid: form.uid,
       type: form.type,
-      target: form.target
-    }))
+      target: form.target,
+      led: form.led.enabled ? { ...form.led } : undefined,
+    }
+    await guardedCall(() => api.post('/rfid/map', payload))
     alert('Associazione salvata con successo!')
     resetForm()
     await loadRfidMap()
@@ -163,6 +219,11 @@ function editMapping(uid, data) {
   form.uid = uid
   form.type = data.type || 'audio'
   form.target = data.target || ''
+  if (data.led) {
+    form.led = { ...form.led, ...data.led }
+  } else {
+    form.led = { enabled: false, effect_id: 'solid', color: '#ffffff', brightness: 70, speed: 30 }
+  }
 }
 
 function resetForm() {
@@ -171,6 +232,7 @@ function resetForm() {
   form.uid = ''
   form.type = 'audio'
   form.target = ''
+  form.led = { enabled: false, effect_id: 'solid', color: '#ffffff', brightness: 70, speed: 30 }
 }
 
 // 5. Scansione live tramite Socket.io
@@ -191,6 +253,7 @@ function handleSocketEvent(data) {
 
 onMounted(() => {
   loadRfidMap()
+  loadLedEffects()
   const socket = getSocket()
   if (socket) {
     socket.on('rfid_scanned', handleSocketEvent)
@@ -411,6 +474,86 @@ onBeforeUnmount(() => {
   padding: 30px;
   color: #aaa;
   font-style: italic;
+}
+
+/* Sezione LED */
+.led-section {
+  margin-top: 15px;
+  border: 1px solid #3a3a48;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.led-toggle {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 15px;
+  background: #1e1e26;
+  cursor: pointer;
+  user-select: none;
+}
+
+.led-toggle:hover {
+  background: #2a2a35;
+}
+
+.toggle-indicator {
+  font-size: 0.8rem;
+  font-weight: bold;
+  padding: 3px 10px;
+  border-radius: 20px;
+  background: #555;
+  color: #aaa;
+}
+
+.toggle-indicator.on {
+  background: #4caf50;
+  color: #fff;
+}
+
+.led-config {
+  padding: 15px;
+  background: #1e1e26;
+}
+
+.led-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.led-row input[type="range"] {
+  width: 100%;
+  background: transparent;
+}
+
+.led-row input[type="color"] {
+  width: 100%;
+  height: 38px;
+  padding: 2px;
+  border-radius: 6px;
+  border: 1px solid #3a3a48;
+  background: #1e1e26;
+  cursor: pointer;
+}
+
+/* Badge LED nella lista */
+.led-badge {
+  margin: 4px 0 0 0;
+  font-size: 0.8rem;
+  color: #ffd27b;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.color-dot {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1px solid #555;
 }
 </style>
 

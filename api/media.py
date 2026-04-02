@@ -122,7 +122,7 @@ def api_rfid_map():
         return jsonify(rfid_map)
         
     if request.method == "POST":
-        # Crea o aggiorna un'associazione Statuina -> File/Comando
+        # Crea o aggiorna un profilo statuina avanzato
         data = request.get_json(silent=True) or {}
         uid = data.get("uid", "").strip().upper()
         action_type = data.get("type", "audio")
@@ -130,12 +130,41 @@ def api_rfid_map():
         
         if not uid or not target:
             return jsonify({"error": "Dati incompleti"}), 400
+
+        # Costruisce il profilo (retrocompatibile con il formato semplice)
+        profile = {
+            "type": action_type,
+            "target": target,
+        }
+
+        # Campi opzionali avanzati
+        if "name" in data:
+            profile["name"] = str(data["name"])
+        if "mode" in data:
+            profile["mode"] = str(data["mode"])
+        if "folder" in data:
+            profile["folder"] = str(data["folder"])
+        if "webradio_url" in data:
+            profile["webradio_url"] = str(data["webradio_url"])
+        if "ai_prompt" in data:
+            profile["ai_prompt"] = str(data["ai_prompt"])
+        if "rss_url" in data:
+            profile["rss_url"] = str(data["rss_url"])
+
+        # Blocco LED opzionale
+        led_data = data.get("led")
+        if isinstance(led_data, dict):
+            profile["led"] = {
+                "enabled": bool(led_data.get("enabled", False)),
+                "effect_id": str(led_data.get("effect_id", "solid")),
+                "color": str(led_data.get("color", "#ffffff")),
+                "brightness": int(led_data.get("brightness", 70)),
+                "speed": int(led_data.get("speed", 30)),
+                "params": led_data.get("params", {}),
+            }
             
         # Aggiorna in RAM
-        rfid_map[uid] = {
-            "type": action_type,
-            "target": target
-        }
+        rfid_map[uid] = profile
         
         # Le statuine cambiano raramente, salviamo direttamente su SD
         save_json_direct(RFID_MAP_FILE, rfid_map)

@@ -48,6 +48,17 @@ def set_all_color(color):
         strip.setPixelColor(i, color)
     strip.show()
 
+def _hex_to_color(hex_str):
+    """Converte un colore hex (#rrggbb) in un oggetto Color NeoPixel."""
+    try:
+        h = hex_str.lstrip("#")
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        return Color(r, g, b)
+    except Exception as e:
+        log(f"Errore parsing colore hex '{hex_str}': {e}. Uso blu di default.", "warning")
+        return Color(0, 0, 255)  # Fallback: blu
+
+
 def _led_worker():
     """Thread in background che legge 'led_runtime' e disegna gli effetti"""
     if not strip: return
@@ -61,30 +72,53 @@ def _led_worker():
             continue
             
         effect = led_runtime.get("current_effect", "solid")
+        color_hex = led_runtime.get("master_color", "#0000ff")
+        speed = max(1, led_runtime.get("master_speed", 30))
+        brightness_pct = led_runtime.get("master_brightness", 70)
+        strip.setBrightness(int(brightness_pct * 255 / 100))
+
+        # Calcola sleep in base alla velocità (1-100 -> 0.01-1s)
+        sleep_time = max(0.01, (101 - speed) / 100.0)
         
         # 2. Gestione degli Effetti
-        if effect == "solid":
-            # Colore fisso (es. blu rilassante)
-            set_all_color(Color(0, 0, 255))
+        if effect == "off":
+            set_all_color(Color(0, 0, 0))
+            eventlet.sleep(1)
+
+        elif effect == "solid":
+            set_all_color(_hex_to_color(color_hex))
             eventlet.sleep(1)
             
         elif effect == "breathing":
-            # Effetto "Respiro" (aumenta e diminuisce la luminosità)
-            brightness = int((math.sin(step / 10.0) + 1.0) * 127.0) # Oscilla tra 0 e 254
+            brightness = int((math.sin(step / 10.0) + 1.0) * 127.0)
             strip.setBrightness(brightness)
-            set_all_color(Color(0, 255, 0)) # Verde
+            set_all_color(_hex_to_color(color_hex))
             strip.show()
             step += 1
-            eventlet.sleep(0.05)
+            eventlet.sleep(sleep_time)
+
+        elif effect == "blink":
+            set_all_color(_hex_to_color(color_hex))
+            eventlet.sleep(sleep_time)
+            set_all_color(Color(0, 0, 0))
+            eventlet.sleep(sleep_time)
             
         elif effect == "rainbow":
-            # Crea un arcobaleno che scorre
             for i in range(strip.numPixels()):
                 pixel_index = (i * 256 // strip.numPixels()) + step
                 strip.setPixelColor(i, wheel(pixel_index & 255))
             strip.show()
             step += 5
-            eventlet.sleep(0.05)
+            eventlet.sleep(sleep_time)
+
+        elif effect == "pulse":
+            c = _hex_to_color(color_hex)
+            set_all_color(c)
+            strip.show()
+            eventlet.sleep(sleep_time * 0.3)
+            set_all_color(Color(0, 0, 0))
+            strip.show()
+            eventlet.sleep(sleep_time * 0.7)
             
         else:
             set_all_color(Color(0, 0, 0))

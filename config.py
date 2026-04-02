@@ -7,6 +7,11 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
+# Hotspot Wi-Fi
+HOTSPOT_SSID = os.environ.get("GUFOBOX_HOTSPOT_SSID", "GUFOBOX")
+HOTSPOT_PASS = os.environ.get("GUFOBOX_HOTSPOT_PASS", "gufobox123")
+HOTSPOT_CONN_NAME = os.environ.get("GUFOBOX_HOTSPOT_CONN", "GUFOBOX-AP")
+
 # Percorsi Media
 MEDIA_ROOT = "/home/gufobox/media"
 FIGURINE_IMAGES_ROOT = os.path.join(MEDIA_ROOT, "immagini_statuine")
@@ -51,6 +56,15 @@ RFID_MAP_FILE = os.path.join(DATA_DIR, "rfid_map.json")
 # Impostazioni Ottimizzazione
 STATE_SAVE_DEBOUNCE_SEC = 2
 API_VERSION = "18.0.0"
+
+# OTA / Backup
+BACKUP_DIR = os.path.join(DATA_DIR, "backups")
+OTA_LOG_FILE = os.path.join(DATA_DIR, "ota.log")
+OTA_STATE_FILE = os.path.join(DATA_DIR, "ota_state.json")
+os.makedirs(BACKUP_DIR, exist_ok=True)
+
+# LED Master
+LED_MASTER_FILE = os.path.join(DATA_DIR, "led_master.json")
 
 
 # Cookie Settings

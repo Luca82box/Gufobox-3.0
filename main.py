@@ -145,7 +145,16 @@ if __name__ == "__main__":
         init_rfid()
         init_leds()
         init_battery()  # <-- NUOVO: Controllo batteria I2C
-        
+
+        # Notifica audio di benvenuto (best-effort: non blocca l'avvio)
+        def _play_welcome():
+            try:
+                from hw.battery import play_ai_notification
+                play_ai_notification("Uhuu! Ciao, sono il Gufetto! Sono pronto a giocare con te!")
+            except Exception as e:
+                log(f"Notifica benvenuto non disponibile: {e}", "warning")
+        eventlet.spawn(_play_welcome)
+
         # 4. Avvia il server web in ascolto su tutte le interfacce (0.0.0.0) sulla porta 5000
         log("Server pronto! In attesa di connessioni...", "info")
         

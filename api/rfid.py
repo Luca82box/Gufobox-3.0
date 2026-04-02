@@ -12,7 +12,9 @@ Endpoints:
 Mantiene anche la rotta legacy /rfid/map (in api/media.py) per retrocompatibilità.
 
 PR 21: aggiunto mode=edu_ai per collegare profili RFID a configurazioni AI educative.
+PR 31: aggiunto mode=voice_recording per riprodurre registrazioni vocali via statuine RFID.
 """
+import os
 import re
 import time
 from urllib.parse import urlparse
@@ -29,7 +31,7 @@ rfid_bp = Blueprint("rfid", __name__)
 # =========================================================
 # VALIDAZIONE
 # =========================================================
-VALID_MODES = {"media_folder", "webradio", "ai_chat", "rss_feed", "edu_ai", "web_media", "school", "entertainment"}
+VALID_MODES = {"media_folder", "webradio", "ai_chat", "rss_feed", "edu_ai", "web_media", "school", "entertainment", "voice_recording"}
 
 # web_media content sub-types (for UI clarity; does not affect playback logic)
 VALID_WEB_CONTENT_TYPES = {"radio", "podcast", "youtube", "rss", "generic"}
@@ -250,6 +252,11 @@ def validate_rfid_profile(data, update=False):
     if edu_error:
         errors.append(edu_error)
 
+    # recording_path (obbligatorio se mode == voice_recording)
+    recording_path = str(data.get("recording_path", "")).strip()
+    if not update and mode == "voice_recording" and not recording_path:
+        errors.append("recording_path è obbligatorio per mode=voice_recording")
+
     if errors:
         return None, "; ".join(errors)
 
@@ -270,6 +277,7 @@ def validate_rfid_profile(data, update=False):
         "loop": loop,
         "led": led,
         "edu_config": edu_config,
+        "recording_path": recording_path,
         "updated_at": int(time.time()),
     }
     return profile, None
@@ -426,6 +434,8 @@ def handle_rfid_trigger(rfid_code: str) -> bool:
             return _exec_edu_ai(rfid_code, profile)
         elif mode in ("school", "entertainment"):
             return _exec_wizard(rfid_code, profile)
+        elif mode == "voice_recording":
+            return _exec_voice_recording(rfid_code, profile)
         else:
             log(f"mode non supportato: {mode}", "warning")
             return False
@@ -663,6 +673,41 @@ def _exec_wizard(rfid_code, profile):
     return True
 
 
+def _exec_voice_recording(rfid_code, profile):
+    """Logica pura per mode=voice_recording: riproduce una registrazione vocale."""
+    from core.media import start_player
+
+    recording_path = profile.get("recording_path", "")
+    if not recording_path:
+        log(f"Profilo RFID {rfid_code} voice_recording: recording_path mancante", "warning")
+        bus.emit_notification("Percorso registrazione mancante nel profilo.", "warning")
+        return False
+
+    if not os.path.isfile(recording_path):
+        log(f"Profilo RFID {rfid_code} voice_recording: file non trovato — {recording_path}", "warning")
+        bus.emit_notification("File registrazione non trovato.", "warning")
+        return False
+
+    success, msg = start_player(
+        recording_path,
+        mode="audio_only",
+        rfid_uid=rfid_code,
+        profile_name=profile.get("name"),
+        profile_mode="voice_recording",
+        volume=profile.get("volume"),
+    )
+    if not success:
+        return False
+
+    log_event("rfid", "info", "Registrazione vocale riprodotta via RFID", {
+        "rfid_code": rfid_code,
+        "profile_name": profile.get("name"),
+        "recording_path": recording_path,
+    })
+    bus.emit_notification(f"🎙️ {profile.get('name', rfid_code)}", "success")
+    return True
+
+
 # =========================================================
 # TRIGGER
 # =========================================================
@@ -713,6 +758,8 @@ def api_rfid_trigger_profile():
         return _trigger_edu_ai(rfid_code, profile)
     elif mode in ("school", "entertainment"):
         return _trigger_wizard(rfid_code, profile)
+    elif mode == "voice_recording":
+        return _trigger_voice_recording(rfid_code, profile)
     else:
         return jsonify({"error": f"mode non supportato: {mode}"}), 400
 
@@ -1074,6 +1121,42 @@ def _trigger_wizard(rfid_code, profile):
         "profile_name": profile.get("name"),
         "rfid_code": rfid_code,
         "wizard": wizard_result,
+    })
+
+
+def _trigger_voice_recording(rfid_code, profile):
+    """mode=voice_recording: riproduce una registrazione vocale salvata."""
+    from core.media import start_player
+
+    recording_path = profile.get("recording_path", "")
+    if not recording_path:
+        return jsonify({"error": "recording_path non specificato nel profilo"}), 400
+
+    if not os.path.isfile(recording_path):
+        return jsonify({"error": "File registrazione non trovato", "path": recording_path}), 404
+
+    success, msg = start_player(
+        recording_path,
+        mode="audio_only",
+        rfid_uid=rfid_code,
+        profile_name=profile.get("name"),
+        profile_mode="voice_recording",
+        volume=profile.get("volume"),
+    )
+    if not success:
+        return jsonify({"error": msg}), 500
+
+    log_event("rfid", "info", "Registrazione vocale riprodotta via RFID", {
+        "rfid_code": rfid_code,
+        "profile_name": profile.get("name"),
+        "recording_path": recording_path,
+    })
+    bus.emit_notification(f"🎙️ {profile.get('name', rfid_code)}", "success")
+    return jsonify({
+        "status": "ok",
+        "mode": "voice_recording",
+        "profile_name": profile.get("name"),
+        "recording_path": recording_path,
     })
 
 

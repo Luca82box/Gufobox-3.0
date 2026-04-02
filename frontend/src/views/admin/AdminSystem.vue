@@ -70,6 +70,75 @@
       </button>
     </div>
 
+    <!-- OTA da file -->
+    <div class="card">
+      <h3>Aggiornamento da File 📁</h3>
+      <p class="card-desc">Carica un package <code>.zip</code> o <code>.tar.gz</code> per aggiornare l'app manualmente.</p>
+
+      <!-- Upload area -->
+      <div class="file-upload-area">
+        <input
+          ref="fileInputRef"
+          type="file"
+          accept=".zip,.tar.gz"
+          style="display:none"
+          @change="onFileSelected"
+        />
+        <button class="btn-ota" @click="fileInputRef.click()" :disabled="otaRunning || uploadBusy">
+          📂 Seleziona package
+        </button>
+        <span v-if="selectedFile" class="file-selected-name">{{ selectedFile.name }}</span>
+        <button
+          v-if="selectedFile"
+          class="btn-ota btn-upload"
+          @click="uploadPackage"
+          :disabled="otaRunning || uploadBusy"
+        >
+          {{ uploadBusy ? '⏳ Caricamento...' : '⬆️ Carica' }}
+        </button>
+      </div>
+
+      <!-- Upload error -->
+      <div v-if="uploadError" class="ota-error-box">⚠️ {{ uploadError }}</div>
+
+      <!-- Staged package info -->
+      <div v-if="otaStatus.staged_filename && !uploadError" class="staged-info">
+        <span class="staged-label">Package caricato:</span>
+        <span class="staged-name">{{ otaStatus.staged_filename }}</span>
+        <span v-if="otaStatus.staged_at" class="staged-date">{{ formatDate(otaStatus.staged_at) }}</span>
+      </div>
+
+      <!-- Apply section -->
+      <div v-if="canApplyUploaded" class="ota-apply-section">
+        <p class="apply-desc">Il package è pronto. Clicca "Applica" per avviare l'aggiornamento (backup automatico prima dell'apply).</p>
+        <div class="ota-actions">
+          <button
+            class="btn-ota btn-apply"
+            @click="applyUploaded"
+            :disabled="otaRunning || uploadBusy"
+          >
+            ✅ Applica Package
+          </button>
+        </div>
+      </div>
+
+      <!-- In-progress for file OTA -->
+      <div v-if="otaRunning && otaStatus.mode === 'file'" class="ota-progress">
+        <div class="progress-bar">
+          <div class="progress-fill" :style="{ width: (otaStatus.progress_percent || 0) + '%' }"></div>
+        </div>
+        <p class="progress-desc">{{ otaStatus.description || 'Apply in corso...' }}</p>
+      </div>
+
+      <!-- File OTA result -->
+      <div v-if="otaStatus.mode === 'file' && otaStatus.status === 'success'" class="ota-success-box">
+        ✅ {{ otaStatus.description }}
+      </div>
+      <div v-if="otaStatus.mode === 'file' && otaStatus.status === 'failed'" class="ota-error-box">
+        ❌ {{ otaStatus.last_error || otaStatus.description }}
+      </div>
+    </div>
+
     <!-- Backups -->
     <div class="card">
       <div class="card-header">
@@ -135,15 +204,25 @@ async function sendAction(azione) {
 }
 
 // OTA
-const otaStatus = ref({ status: 'idle', mode: null, started_at: null, finished_at: null, error: null, last_error: null, progress_percent: null, description: null, running: false })
+const otaStatus = ref({ status: 'idle', mode: null, started_at: null, finished_at: null, error: null, last_error: null, progress_percent: null, description: null, running: false, staged_filename: null, staged_at: null })
 const otaLog = ref('')
 const showLog = ref(false)
 const rollingBack = ref(false)
 let otaPollInterval = null
 
-const otaRunning = computed(() => otaStatus.value.running || otaStatus.value.status === 'running')
+const otaRunning = computed(() => otaStatus.value.running || otaStatus.value.status === 'running' || otaStatus.value.status === 'validating' || otaStatus.value.status === 'applying')
 const otaStatusLabel = computed(() => {
-  const map = { idle: 'In attesa', running: 'In corso...', done: 'Completato ✅', error: 'Errore ❌' }
+  const map = {
+    idle: 'In attesa',
+    running: 'In corso...',
+    done: 'Completato ✅',
+    error: 'Errore ❌',
+    uploaded: 'Package caricato 📦',
+    validating: 'Validazione...',
+    applying: 'Apply in corso...',
+    success: 'Completato ✅',
+    failed: 'Fallito ❌',
+  }
   return map[otaStatus.value.status] || otaStatus.value.status
 })
 
@@ -153,7 +232,7 @@ async function loadOtaStatus() {
     const { data } = await guardedCall(() => api.get('/system/ota/status'))
     otaStatus.value = data
     // Auto-poll while running
-    if (data.running || data.status === 'running') {
+    if (data.running || data.status === 'running' || data.status === 'validating' || data.status === 'applying') {
       if (!otaPollInterval) {
         otaPollInterval = setInterval(loadOtaStatus, 3000)
       }
@@ -187,6 +266,69 @@ async function toggleLog() {
     } catch (e) {
       otaLog.value = extractApiError(e, 'Errore lettura log')
     }
+  }
+}
+
+// ─── OTA da file ─────────────────────────────────────────────────────────────
+const fileInputRef = ref(null)
+const selectedFile = ref(null)
+const uploadBusy = ref(false)
+const uploadError = ref('')
+
+const canApplyUploaded = computed(() =>
+  !otaRunning.value &&
+  !uploadBusy.value &&
+  otaStatus.value.staged_filename &&
+  ['uploaded', 'success', 'failed'].includes(otaStatus.value.status) &&
+  otaStatus.value.mode === 'file'
+)
+
+function onFileSelected(event) {
+  uploadError.value = ''
+  const file = event.target.files?.[0]
+  if (!file) return
+  const name = file.name.toLowerCase()
+  if (!name.endsWith('.zip') && !name.endsWith('.tar.gz')) {
+    uploadError.value = `Estensione non consentita: "${file.name}". Usa .zip o .tar.gz`
+    selectedFile.value = null
+    return
+  }
+  selectedFile.value = file
+}
+
+async function uploadPackage() {
+  if (!selectedFile.value) return
+  uploadBusy.value = true
+  uploadError.value = ''
+  try {
+    const api = getApi()
+    const formData = new FormData()
+    formData.append('file', selectedFile.value)
+    await guardedCall(() => api.post('/system/ota/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }))
+    selectedFile.value = null
+    if (fileInputRef.value) fileInputRef.value.value = ''
+    await loadOtaStatus()
+  } catch (e) {
+    uploadError.value = extractApiError(e, 'Errore upload package')
+  } finally {
+    uploadBusy.value = false
+  }
+}
+
+async function applyUploaded() {
+  if (!confirm('Applicare il package caricato? Verrà creato un backup automatico prima di procedere.')) return
+  try {
+    const api = getApi()
+    await guardedCall(() => api.post('/system/ota/apply_uploaded'))
+    // Start polling
+    setTimeout(loadOtaStatus, 1500)
+    if (!otaPollInterval) {
+      otaPollInterval = setInterval(loadOtaStatus, 3000)
+    }
+  } catch (e) {
+    alert(extractApiError(e, 'Errore apply package'))
   }
 }
 
@@ -478,5 +620,104 @@ onUnmounted(() => {
   color: #aaa;
   font-style: italic;
   font-size: 0.9rem;
+}
+
+/* OTA status bar extra states */
+.ota-status-bar.uploaded { border-left-color: #7c4dff; }
+.ota-status-bar.validating { border-left-color: #ff9800; }
+.ota-status-bar.applying { border-left-color: #ff9800; }
+.ota-status-bar.success { border-left-color: #4caf50; }
+.ota-status-bar.failed { border-left-color: #e53935; }
+
+/* OTA da file card */
+.card-desc {
+  color: #aaa;
+  font-size: 0.9rem;
+  margin: -5px 0 15px 0;
+}
+
+.card-desc code {
+  background: #1e1e26;
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: #ffd27b;
+}
+
+.file-upload-area {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.file-selected-name {
+  color: #ccc;
+  font-size: 0.9rem;
+  background: #1e1e26;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid #3a3a48;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.btn-upload {
+  background: #00897b;
+}
+
+.staged-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #1a2a1a;
+  border: 1px solid #2a5a2a;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.staged-label {
+  color: #aaa;
+  font-size: 0.85rem;
+}
+
+.staged-name {
+  color: #8aff8a;
+  font-weight: bold;
+  font-size: 0.9rem;
+}
+
+.staged-date {
+  color: #aaa;
+  font-size: 0.8rem;
+  margin-left: auto;
+}
+
+.ota-apply-section {
+  margin-bottom: 12px;
+}
+
+.apply-desc {
+  color: #ccc;
+  font-size: 0.9rem;
+  margin: 0 0 10px 0;
+}
+
+.btn-apply {
+  background: #4caf50;
+}
+
+.ota-success-box {
+  background: #1a2a1a;
+  border: 1px solid #4caf50;
+  border-radius: 8px;
+  padding: 10px 15px;
+  color: #8aff8a;
+  font-size: 0.9rem;
+  margin-bottom: 12px;
 }
 </style>

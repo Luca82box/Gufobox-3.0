@@ -1,7 +1,11 @@
+import io
 import os
 import json
 import shutil
+import tarfile
+import tempfile
 import threading
+import zipfile
 from datetime import datetime
 
 from flask import Blueprint, request, jsonify
@@ -9,7 +13,10 @@ from core.state import media_runtime, alarms_list, bus, now_ts
 from core.utils import run_cmd, t, log
 from core.hardware import perform_standby, is_in_standby, get_standby_state
 from core.event_log import log_event
-from config import BASE_DIR, BACKUP_DIR, OTA_LOG_FILE, OTA_STATE_FILE
+from config import (
+    BASE_DIR, BACKUP_DIR, OTA_LOG_FILE, OTA_STATE_FILE,
+    OTA_STAGING_DIR, OTA_MAX_PACKAGE_BYTES,
+)
 
 # Creiamo il Blueprint per le rotte di sistema
 system_bp = Blueprint('system', __name__)
@@ -148,6 +155,9 @@ _OTA_STATE_DEFAULT = {
     "description": None,
     "error": None,
     "last_error": None,
+    # OTA-from-file fields
+    "staged_filename": None,
+    "staged_at": None,
 }
 
 
@@ -436,6 +446,329 @@ def api_rollback():
     rb_thread = threading.Thread(target=_do_rollback, daemon=True)
     rb_thread.start()
     return jsonify({"status": "started", "backup_name": trusted_name})
+
+
+# =========================================================
+# OTA DA FILE — Upload, validazione, apply
+# =========================================================
+
+#: Estensioni accettate per i package OTA
+_OTA_ALLOWED_EXTENSIONS = {".zip", ".tar.gz"}
+
+#: File/dir che devono esistere nell'archivio per considerarlo un'app valida
+_OTA_PACKAGE_REQUIRED = {"main.py"}
+
+#: Path di destinazione che l'apply può toccare (esclude data/, .git, node_modules)
+_OTA_APPLY_EXCLUSIONS = _BACKUP_EXCLUSIONS
+
+
+def _ota_package_extension(filename: str):
+    """
+    Return the allowed extension (.zip or .tar.gz) or None if not recognised.
+    Matching is case-insensitive.
+    """
+    name = filename.lower()
+    if name.endswith(".tar.gz"):
+        return ".tar.gz"
+    if name.endswith(".zip"):
+        return ".zip"
+    return None
+
+
+def _validate_archive(path: str, ext: str):
+    """
+    Validate a staged archive.
+
+    Returns (ok: bool, error_message: str | None).
+
+    Checks:
+    - No path traversal (absolute paths or `..` components)
+    - At least one required file present (main.py)
+    - No member that would write outside the expected structure
+    """
+    members = []
+    try:
+        if ext == ".zip":
+            with zipfile.ZipFile(path, "r") as zf:
+                members = zf.namelist()
+        elif ext == ".tar.gz":
+            with tarfile.open(path, "r:gz") as tf:
+                members = tf.getnames()
+        else:
+            return False, f"Estensione non supportata: {ext}"
+    except (zipfile.BadZipFile, tarfile.TarError, Exception) as e:
+        return False, f"Archivio corrotto o illeggibile: {e}"
+
+    # Path traversal check
+    for m in members:
+        norm = os.path.normpath(m)
+        if os.path.isabs(norm) or norm.startswith(".."):
+            return False, f"Path traversal rilevato nel package: {m!r}"
+
+    # Check for a top-level prefix (common: everything under "gufobox/", strip it)
+    prefixes = set()
+    for m in members:
+        parts = m.replace("\\", "/").split("/", 1)
+        if len(parts) > 1:
+            prefixes.add(parts[0])
+
+    stripped_names = set()
+    if len(prefixes) == 1:
+        # All members share a common top dir — strip it
+        prefix = next(iter(prefixes)) + "/"
+        for m in members:
+            stripped_names.add(m[len(prefix):] if m.startswith(prefix) else m)
+    else:
+        stripped_names = set(members)
+
+    # Check required files
+    for req in _OTA_PACKAGE_REQUIRED:
+        if req not in stripped_names:
+            return False, (
+                f"Package non valido: file richiesto '{req}' non trovato. "
+                f"Il package deve contenere almeno: {', '.join(sorted(_OTA_PACKAGE_REQUIRED))}"
+            )
+
+    return True, None
+
+
+def _apply_archive(staged_path: str, ext: str, dest_dir: str):
+    """
+    Extract the archive to a temp dir, then copy files to dest_dir.
+
+    Returns (ok: bool, error_message: str | None, files_copied: int).
+    Skips files in _OTA_APPLY_EXCLUSIONS.
+    """
+    with tempfile.TemporaryDirectory(prefix="gufobox_ota_apply_") as tmp:
+        # Extract
+        try:
+            if ext == ".zip":
+                with zipfile.ZipFile(staged_path, "r") as zf:
+                    zf.extractall(tmp)
+            elif ext == ".tar.gz":
+                with tarfile.open(staged_path, "r:gz") as tf:
+                    tf.extractall(tmp)
+        except Exception as e:
+            return False, f"Errore estrazione archivio: {e}", 0
+
+        # Detect optional common top-level prefix
+        top_items = os.listdir(tmp)
+        src_root = tmp
+        if len(top_items) == 1 and os.path.isdir(os.path.join(tmp, top_items[0])):
+            src_root = os.path.join(tmp, top_items[0])
+
+        # Copy each item (skip exclusions)
+        errors = []
+        files_copied = 0
+        for item in os.listdir(src_root):
+            if item in _OTA_APPLY_EXCLUSIONS:
+                continue
+            src = os.path.join(src_root, item)
+            dst = os.path.join(dest_dir, item)
+            try:
+                if os.path.isdir(src):
+                    if os.path.exists(dst):
+                        shutil.rmtree(dst)
+                    shutil.copytree(src, dst)
+                else:
+                    shutil.copy2(src, dst)
+                files_copied += 1
+            except Exception as e:
+                errors.append(f"{item}: {e}")
+
+        if errors:
+            return False, "Errori durante la copia: " + "; ".join(errors), files_copied
+
+        return True, None, files_copied
+
+
+def _run_ota_file(staged_path: str, staged_filename: str, ext: str):
+    """Execute the OTA-from-file apply flow in a worker thread."""
+    ota_state = _load_ota_state()
+    ota_state.update({
+        "running": True,
+        "status": "validating",
+        "mode": "file",
+        "started_at": datetime.now().isoformat(),
+        "finished_at": None,
+        "progress_percent": 0,
+        "description": "Validazione package...",
+        "error": None,
+        "last_error": None,
+        "staged_filename": staged_filename,
+    })
+    _save_ota_state(ota_state)
+    log_event("ota", "info", "OTA da file: validazione avviata", {"filename": staged_filename})
+
+    def _progress(pct, desc):
+        ota_state["progress_percent"] = pct
+        ota_state["description"] = desc
+        _save_ota_state(ota_state)
+        _ota_log(f"[{pct}%] {desc}")
+
+    try:
+        # 1) Validate
+        _progress(5, "Validazione archivio in corso...")
+        ok, err_msg = _validate_archive(staged_path, ext)
+        if not ok:
+            raise RuntimeError(f"Package non valido: {err_msg}")
+        log_event("ota", "info", "OTA da file: validazione OK", {"filename": staged_filename})
+        _progress(15, "Validazione completata — creazione backup pre-apply...")
+
+        # 2) Backup
+        ota_state["status"] = "applying"
+        _save_ota_state(ota_state)
+        backup_name = _create_backup()
+        if not backup_name:
+            raise RuntimeError("Backup fallito, apply annullato per sicurezza")
+        _progress(30, f"Backup creato: {backup_name}")
+
+        # 3) Apply
+        _progress(40, "Applicazione package in corso...")
+        ok, err_msg, files_copied = _apply_archive(staged_path, ext, BASE_DIR)
+        if not ok:
+            raise RuntimeError(f"Apply fallito: {err_msg}")
+        _progress(90, f"Package applicato ({files_copied} elementi copiati)")
+
+        # 4) Done
+        ota_state["status"] = "success"
+        ota_state["running"] = False
+        ota_state["progress_percent"] = 100
+        ota_state["description"] = f"Aggiornamento da file completato! ({files_copied} elementi copiati)"
+        _ota_log("OTA da file completato con successo!")
+        bus.emit_notification("Aggiornamento da file completato! ✅ Riavvia per applicare.", "success")
+        log_event("ota", "info", "OTA da file: apply completato con successo", {
+            "filename": staged_filename, "files_copied": files_copied, "backup": backup_name,
+        })
+
+    except Exception as e:
+        ota_state["status"] = "failed"
+        ota_state["running"] = False
+        ota_state["error"] = str(e)
+        ota_state["last_error"] = str(e)
+        ota_state["description"] = f"Errore: {e}"
+        _ota_log(f"ERRORE OTA da file: {e}")
+        bus.emit_notification(f"Errore aggiornamento da file: {e}", "error")
+        log_event("ota", "error", f"OTA da file: fallito — {e}", {
+            "filename": staged_filename, "error": str(e),
+        })
+    finally:
+        ota_state["finished_at"] = datetime.now().isoformat()
+        _save_ota_state(ota_state)
+
+
+@system_bp.route("/system/ota/upload", methods=["POST"])
+def api_ota_upload():
+    """
+    Upload a package file to the OTA staging area.
+
+    Accepts multipart/form-data with a ``file`` field.
+    Allowed formats: .zip, .tar.gz
+    Max size: OTA_MAX_PACKAGE_BYTES (100 MB).
+
+    Returns the staged filename and updates ota_state to ``uploaded``.
+    """
+    if "file" not in request.files:
+        return jsonify({"error": "Campo 'file' mancante nella richiesta"}), 400
+
+    f = request.files["file"]
+    original_name = f.filename or ""
+    if not original_name:
+        return jsonify({"error": "Nome file non valido"}), 400
+
+    ext = _ota_package_extension(original_name)
+    if ext is None:
+        log_event("ota", "warning", "OTA upload rifiutato: estensione non consentita", {"filename": original_name})
+        return jsonify({
+            "error": (
+                f"Estensione non consentita: '{original_name}'. "
+                "Usa .zip o .tar.gz"
+            )
+        }), 400
+
+    # Read and check size (stream-safe: read into memory-bounded buffer)
+    data = f.read(OTA_MAX_PACKAGE_BYTES + 1)
+    if len(data) > OTA_MAX_PACKAGE_BYTES:
+        log_event("ota", "warning", "OTA upload rifiutato: file troppo grande", {
+            "filename": original_name, "max_bytes": OTA_MAX_PACKAGE_BYTES,
+        })
+        return jsonify({
+            "error": (
+                f"File troppo grande (max {OTA_MAX_PACKAGE_BYTES // (1024*1024)} MB). "
+                f"Dimensione ricevuta: > {OTA_MAX_PACKAGE_BYTES // (1024*1024)} MB"
+            )
+        }), 413
+
+    # Save to staging dir (fixed name, sanitised)
+    staged_name = "staged_package" + ext
+    staged_path = os.path.join(OTA_STAGING_DIR, staged_name)
+    try:
+        with open(staged_path, "wb") as out:
+            out.write(data)
+    except Exception as e:
+        log(f"Errore salvataggio package OTA: {e}", "warning")
+        return jsonify({"error": "Impossibile salvare il package nella staging area"}), 500
+
+    # Update ota_state
+    ota_state = _load_ota_state()
+    ota_state.update({
+        "status": "uploaded",
+        "running": False,
+        "mode": "file",
+        "staged_filename": original_name,
+        "staged_at": datetime.now().isoformat(),
+        "error": None,
+        "description": f"Package '{original_name}' caricato, pronto per la validazione.",
+    })
+    _save_ota_state(ota_state)
+    _ota_log(f"Package OTA caricato: {original_name} ({len(data)} bytes) → {staged_name}")
+    log_event("ota", "info", f"Package OTA caricato: {original_name}", {
+        "filename": original_name, "size_bytes": len(data), "ext": ext,
+    })
+
+    return jsonify({
+        "status": "uploaded",
+        "filename": original_name,
+        "size_bytes": len(data),
+        "ext": ext,
+    })
+
+
+@system_bp.route("/system/ota/apply_uploaded", methods=["POST"])
+def api_ota_apply_uploaded():
+    """
+    Validate and apply the previously uploaded package.
+
+    This endpoint is async: the apply runs in a background thread.
+    Requires a previously uploaded package (ota_state.status == 'uploaded').
+    """
+    if not _ota_lock.acquire(blocking=False):
+        return jsonify({"error": "Un aggiornamento è già in corso"}), 409
+
+    # Find the staged file
+    ota_state = _load_ota_state()
+    staged_filename = ota_state.get("staged_filename") or ""
+    ext = _ota_package_extension(staged_filename)
+    if not ext:
+        _ota_lock.release()
+        return jsonify({"error": "Nessun package caricato o estensione non riconosciuta"}), 400
+
+    staged_name = "staged_package" + ext
+    staged_path = os.path.join(OTA_STAGING_DIR, staged_name)
+    if not os.path.isfile(staged_path):
+        _ota_lock.release()
+        return jsonify({"error": "Package non trovato nella staging area. Caricalo di nuovo."}), 404
+
+    def _worker():
+        try:
+            _run_ota_file(staged_path, staged_filename, ext)
+        finally:
+            _ota_lock.release()
+
+    t_ota = threading.Thread(target=_worker, daemon=True)
+    t_ota.start()
+    bus.emit_notification(f"Apply OTA da file avviato: {staged_filename} ⬆️", "info")
+    return jsonify({"status": "started", "filename": staged_filename})
 
 
 # =========================================================

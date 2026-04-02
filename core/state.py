@@ -41,9 +41,40 @@ def save_json_direct(path, data):
 # =========================================================
 # VARIABILI DI STATO GLOBALI (In RAM)
 # =========================================================
-DEFAULT_STATE = {"initialized": True, "pin_enabled": True, "volume": 60, "lang": "it"}
-DEFAULT_MEDIA_RUNTIME = {"player_running": False, "player_mode": "idle", "current_volume": 60, "sleep_timer_target_ts": None}
-DEFAULT_LED_RUNTIME = {"master_enabled": True, "current_effect": "solid"}
+DEFAULT_STATE = {
+    "initialized": True,
+    "pin_enabled": True,
+    "volume": 60,
+    "lang": "it",
+    # auth sub-dict (populated by api/auth.py on first login)
+    "auth": None,
+    # battery last reading (populated by hw/battery.py)
+    "battery": None,
+    # parental control
+    "parental_control": {
+        "enabled": False,
+        "daily_limit_minutes": 120,
+        "allow_from": "08:00",
+        "allow_to": "20:30",
+        "max_volume": 80,
+    },
+}
+DEFAULT_MEDIA_RUNTIME = {
+    "player_running": False,
+    "player_mode": "idle",
+    "current_volume": 60,
+    "sleep_timer_target_ts": None,
+    "current_file": None,
+    "current_rfid_uid": None,
+    "resume_position": None,
+}
+DEFAULT_LED_RUNTIME = {
+    "master_enabled": True,
+    "current_effect": "solid",
+    "master_color": "#0000ff",
+    "master_brightness": 70,
+    "master_speed": 30,
+}
 DEFAULT_AI_RUNTIME = {"is_speaking": False, "is_thinking": False, "history": []}
 
 state = load_json(STATE_FILE, DEFAULT_STATE)
@@ -61,10 +92,11 @@ def get_jobs_list_sorted():
     now = now_ts()
     out = []
     for jid, job in jobs_state.items():
-        if job.get("status") in ["done", "error", "canceled"] and (now - job.get("end_ts", 0)) > 86400:
+        finished = job.get("finished_ts") or job.get("end_ts", 0)
+        if job.get("status") in ["done", "error", "canceled"] and (now - finished) > 86400:
             continue
         out.append(job)
-    return sorted(out, key=lambda x: x.get("start_ts", 0), reverse=True)
+    return sorted(out, key=lambda x: x.get("created_ts", x.get("start_ts", 0)), reverse=True)
 
 def build_public_snapshot():
     # Se abbiamo già calcolato il JSON di recente, usiamo la cache!
@@ -82,6 +114,7 @@ def build_public_snapshot():
 def build_admin_snapshot():
     payload = build_public_snapshot().copy()
     payload["jobs"] = get_jobs_list_sorted()
+    payload["rfid_map"] = rfid_map
     return payload
 
 # =========================================================

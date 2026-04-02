@@ -74,13 +74,55 @@ wizard_state = {
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+def _get_configured_activities(category: str) -> list:
+    """
+    Return the list of activity IDs for *category* from the admin-configured
+    wizard categories stored in ai_settings["wizard_categories"].
+
+    Only activities with ``enabled = True`` are included.
+    The order matches the admin-saved order.
+
+    Falls back to the hardcoded ``CATEGORY_ACTIVITIES`` defaults when:
+    - the admin config is absent or not a dict
+    - the category entry is missing
+    - no activity is enabled
+    - any other unexpected error
+    """
+    default = list(CATEGORY_ACTIVITIES.get(category, []))
+    try:
+        # Late import to avoid circular dependency
+        from api.ai import ai_settings  # noqa: PLC0415
+        wizard_cats = ai_settings.get("wizard_categories")
+        if not isinstance(wizard_cats, dict):
+            return default
+        cat_data = wizard_cats.get(category)
+        if not isinstance(cat_data, dict):
+            return default
+        activities = cat_data.get("activities")
+        if not isinstance(activities, list):
+            return default
+        enabled = [
+            act["id"]
+            for act in activities
+            if (
+                isinstance(act, dict)
+                and isinstance(act.get("id"), str)
+                and act["id"]
+                and act.get("enabled", True)
+            )
+        ]
+        return enabled if enabled else default
+    except (AttributeError, KeyError, TypeError):  # defensive: config corruption
+        return default
+
+
 def _options_for_stage(stage, partial):
     """Return the list of valid option strings for the given stage."""
     if stage == STAGE_AGE:
         return sorted(VALID_AGE_GROUPS)
     if stage == STAGE_ACTIVITY:
         cat = partial.get("source_category")
-        return list(CATEGORY_ACTIVITIES.get(cat, []))
+        return _get_configured_activities(cat)
     if stage == STAGE_LANGUAGE:
         return sorted(VALID_LANGUAGES)
     if stage == STAGE_STEP:

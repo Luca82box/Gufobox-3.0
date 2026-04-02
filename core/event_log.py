@@ -29,8 +29,13 @@ from typing import Any
 # Maximum number of events kept in the log file (ring buffer)
 EVENT_LOG_MAX_ENTRIES = 500
 
+# Trim the log file only every N append operations to reduce SD card I/O
+EVENT_LOG_TRIM_EVERY = 10
+
 _lock = threading.Lock()
 _log_file: str | None = None  # set by _init_log_file() on first use
+_append_count: int = 0  # counts appends since last trim
+_append_count_for_file: str | None = None  # file path the counter is tracking
 
 
 def _init_log_file() -> str:
@@ -79,6 +84,25 @@ def _write_raw(events: list[dict]) -> None:
         pass
 
 
+def _append_raw(event: dict) -> None:
+    """Append a single event to the log file without reading the whole file."""
+    path = _init_log_file()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(event, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def _trim_if_needed() -> None:
+    """Trim the log file to EVENT_LOG_MAX_ENTRIES entries (full read+write)."""
+    events = _read_raw()
+    if len(events) > EVENT_LOG_MAX_ENTRIES:
+        events = events[-EVENT_LOG_MAX_ENTRIES:]
+        _write_raw(events)
+
+
 def log_event(
     area: str,
     severity: str,
@@ -104,13 +128,19 @@ def log_event(
     if details:
         event["details"] = details
 
+    global _append_count, _append_count_for_file
     with _lock:
-        events = _read_raw()
-        events.append(event)
-        # Trim to max size (keep most recent)
-        if len(events) > EVENT_LOG_MAX_ENTRIES:
-            events = events[-EVENT_LOG_MAX_ENTRIES:]
-        _write_raw(events)
+        current_file = _init_log_file()
+        # Reset counter if the log file has been swapped (e.g. in tests)
+        if _append_count_for_file != current_file:
+            _append_count = 0
+            _append_count_for_file = current_file
+        _append_raw(event)
+        _append_count += 1
+        # Periodically trim to bounded size to avoid unbounded growth
+        if _append_count >= EVENT_LOG_TRIM_EVERY:
+            _trim_if_needed()
+            _append_count = 0
 
 
 def get_events(limit: int = 100) -> list[dict]:
@@ -128,5 +158,7 @@ def get_events(limit: int = 100) -> list[dict]:
 
 def clear_events() -> None:
     """Remove all stored events. Used mainly in tests."""
+    global _append_count
     with _lock:
         _write_raw([])
+        _append_count = 0

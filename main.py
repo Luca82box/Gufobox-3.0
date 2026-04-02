@@ -5,12 +5,12 @@
 import eventlet
 eventlet.monkey_patch()
 
-from flask import Flask
+from flask import Flask, send_from_directory
 from flask_cors import CORS
 
 # Importiamo la configurazione e le utility
 from config import SECRET_KEY, SESSION_COOKIE_SAMESITE, SESSION_COOKIE_SECURE, API_VERSION
-from core.utils import log
+from core.utils import log, request_shutdown
 from core.extensions import socketio
 
 # Importiamo i gestori dello stato e i database
@@ -45,9 +45,14 @@ from api.rss import rss_bp
 from api.audio import audio_bp
 from api.wizard import wizard_bp
 
+import os
+
+# Percorso alla build del frontend Vue (generata da `npm run build`)
+_FRONTEND_DIST = os.path.join(os.path.dirname(__file__), "frontend", "dist")
+
 def create_app():
     """Configura e assembla l'applicazione Flask principale"""
-    app = Flask(__name__)
+    app = Flask(__name__, static_folder=None)
     
     # Sicurezza e Sessioni
     app.secret_key = SECRET_KEY
@@ -75,6 +80,23 @@ def create_app():
     app.register_blueprint(rss_bp, url_prefix='/api')
     app.register_blueprint(audio_bp, url_prefix='/api')
     app.register_blueprint(wizard_bp, url_prefix='/api')
+
+    # Servi i file statici del frontend Vue (build produzione)
+    if os.path.isdir(_FRONTEND_DIST):
+        log(f"Frontend Vue build trovata in {_FRONTEND_DIST} — verrà servita da Flask.", "info")
+
+        @app.route("/", defaults={"path": ""})
+        @app.route("/<path:path>")
+        def serve_frontend(path):
+            """Serve il frontend Vue buildato o l'index.html per SPA routing."""
+            # Risorse statiche (js, css, img, ecc.) — serve il file direttamente
+            full_path = os.path.join(_FRONTEND_DIST, path)
+            if path and os.path.isfile(full_path):
+                return send_from_directory(_FRONTEND_DIST, path)
+            # Catch-all per SPA: tutte le rotte non-API servono index.html
+            return send_from_directory(_FRONTEND_DIST, "index.html")
+    else:
+        log(f"Frontend Vue build NON trovata in {_FRONTEND_DIST} — modalità API-only.", "warning")
 
     # Colleghiamo Socket.io all'app Flask per le comunicazioni in tempo reale
     socketio.init_app(app, cors_allowed_origins="*", async_mode="eventlet", ping_interval=25, ping_timeout=20)
@@ -126,8 +148,14 @@ if __name__ == "__main__":
         
     except KeyboardInterrupt:
         log("Spegnimento manuale rilevato. Chiusura servizi...", "warning")
+        request_shutdown()
     finally:
+        # Segnala a tutti i worker di terminare e dai loro un momento per farlo
+        request_shutdown()
+        log("Attendo la terminazione dei worker...", "info")
+        eventlet.sleep(1)
         # Pulisce l'annuncio mDNS quando spegni il server
         cleanup_mdns()
         log("GufoBox spenta correttamente.", "info")
+
 

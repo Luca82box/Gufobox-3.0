@@ -219,8 +219,9 @@ def _player_watchdog_loop():
     Questo è il nuovo Watchdog ad Altissima Efficienza (0% CPU).
     Attende silenziosamente che il processo MPV termini da solo (es. fine canzone).
     """
+    from core.utils import is_shutdown_requested
     global player_proc, _current_rfid_uid, _current_target
-    while True:
+    while not is_shutdown_requested():
         eventlet.sleep(1) # Pausa leggera per respirare
 
         proc = player_proc

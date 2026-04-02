@@ -79,3 +79,18 @@ def set_lang(lang_code):
 def t(key):
     return LANG_STRINGS.get(_current_lang, LANG_STRINGS["it"]).get(key, key)
 
+# =========================================================
+# GRACEFUL SHUTDOWN FLAG
+# =========================================================
+_shutdown_requested = False
+
+def request_shutdown():
+    """Segnala a tutti i worker di terminare il ciclo principale."""
+    global _shutdown_requested
+    _shutdown_requested = True
+    log("Shutdown richiesto: i worker si fermeranno al prossimo ciclo.", "info")
+
+def is_shutdown_requested() -> bool:
+    """Ritorna True se è stato richiesto uno shutdown ordinato."""
+    return _shutdown_requested
+

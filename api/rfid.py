@@ -374,6 +374,296 @@ def api_rfid_current():
 
 
 # =========================================================
+# TRIGGER DIRETTO PYTHON (evita roundtrip HTTP locale)
+# =========================================================
+def handle_rfid_trigger(rfid_code: str) -> bool:
+    """
+    Trigger RFID diretto Python — usato da hw/rfid.py per evitare il roundtrip HTTP.
+    Contiene la stessa logica di api_rfid_trigger_profile ma senza dipendenze Flask.
+    Ritorna True se il trigger è stato gestito con successo.
+    """
+    rfid_code = str(rfid_code).strip().upper()
+    if not rfid_code:
+        return False
+
+    profile = rfid_profiles.get(rfid_code)
+    if not profile:
+        log(f"Profilo RFID {rfid_code} non trovato — provo legacy rfid_map", "info")
+        from core.state import rfid_map
+        legacy = rfid_map.get(rfid_code)
+        if legacy:
+            target = legacy.get("target", "")
+            if target:
+                from core.media import start_player
+                _apply_profile_led(rfid_code, legacy)
+                start_player(target, mode="audio_only", rfid_uid=rfid_code,
+                             profile_name=legacy.get("name"), profile_mode=legacy.get("mode"))
+                bus.emit_notification(f"▶️ {legacy.get('name', rfid_code)}", "success")
+            return True
+        bus.emit_notification("Statuina sconosciuta! Associala dal pannello.", "warning")
+        return False
+
+    if not profile.get("enabled", True):
+        log(f"Profilo RFID {rfid_code} disabilitato", "info")
+        return False
+
+    mode = profile.get("mode", "media_folder")
+    log(f"Trigger RFID diretto: {rfid_code} → mode={mode}", "info")
+    _apply_profile_led(rfid_code, profile)
+
+    try:
+        if mode == "media_folder":
+            return _exec_media_folder(rfid_code, profile)
+        elif mode == "webradio":
+            return _exec_webradio(rfid_code, profile)
+        elif mode == "web_media":
+            return _exec_web_media(rfid_code, profile)
+        elif mode == "ai_chat":
+            return _exec_ai_chat(rfid_code, profile)
+        elif mode == "rss_feed":
+            return _exec_rss_feed(rfid_code, profile)
+        elif mode == "edu_ai":
+            return _exec_edu_ai(rfid_code, profile)
+        elif mode in ("school", "entertainment"):
+            return _exec_wizard(rfid_code, profile)
+        else:
+            log(f"mode non supportato: {mode}", "warning")
+            return False
+    except Exception as e:
+        log(f"Errore nel trigger RFID diretto {rfid_code}: {e}", "warning")
+        return False
+
+
+# =========================================================
+# BUSINESS LOGIC (indipendente da Flask — usata da handle_rfid_trigger e _trigger_*)
+# =========================================================
+def _exec_media_folder(rfid_code, profile):
+    """Logica pura per mode=media_folder."""
+    from core.media import start_player, build_playlist
+    from core.database import get_resume_position
+
+    folder = profile.get("folder", "")
+    if not folder:
+        return False
+
+    playlist = build_playlist(folder)
+    if not playlist:
+        bus.emit_notification(f"Cartella vuota o non trovata: {folder}", "warning")
+        return False
+
+    playlist_index = 0
+    resume = get_resume_position(rfid_code)
+    target = playlist[0]
+    if resume and resume.get("playlist_index", 0) < len(playlist):
+        playlist_index = resume["playlist_index"]
+        target = playlist[playlist_index]
+
+    media_runtime["current_playlist"] = playlist
+    success, msg = start_player(
+        target, mode="audio_only", rfid_uid=rfid_code, playlist_index=playlist_index,
+        profile_name=profile.get("name"), profile_mode="media_folder",
+        volume=profile.get("volume"),
+    )
+    if not success:
+        return False
+    bus.emit_notification(f"▶️ {profile.get('name', rfid_code)}", "success")
+    return True
+
+
+def _exec_webradio(rfid_code, profile):
+    """Logica pura per mode=webradio."""
+    from core.media import start_player
+
+    url = profile.get("webradio_url", "")
+    if not url:
+        return False
+
+    success, msg = start_player(
+        url, mode="audio_only", rfid_uid=rfid_code,
+        profile_name=profile.get("name"), profile_mode="webradio",
+        volume=profile.get("volume"),
+    )
+    if not success:
+        return False
+    bus.emit_notification(f"📻 {profile.get('name', rfid_code)}", "success")
+    return True
+
+
+def _exec_web_media(rfid_code, profile):
+    """Logica pura per mode=web_media."""
+    url = profile.get("web_media_url", "")
+    if not url:
+        return False
+
+    content_type = profile.get("web_content_type", "generic")
+
+    if content_type == "rss":
+        rss_limit = profile.get("rss_limit", 10)
+        items, err = _fetch_rss(url, rss_limit)
+        if err:
+            bus.emit_notification("Errore durante il fetch RSS", "warning")
+            return False
+        rss_state = {
+            "rfid_code": rfid_code, "profile_name": profile.get("name"),
+            "rss_url": url, "fetched_at": int(time.time()), "items": items,
+        }
+        rss_runtime[rfid_code] = rss_state
+        bus.mark_dirty("rss")
+        media_runtime["current_rfid"] = rfid_code
+        media_runtime["current_profile_name"] = profile.get("name")
+        media_runtime["current_mode"] = "web_media"
+        media_runtime["web_content_type"] = content_type
+        media_runtime["web_media_url"] = url
+        media_runtime["rss_state"] = rss_state
+        bus.mark_dirty("media")
+        bus.request_emit("public")
+        bus.emit_notification(f"📰 {profile.get('name', rfid_code)} — {len(items)} articoli", "success")
+        return True
+
+    from core.media import start_player
+    _CONTENT_ICONS = {"radio": "📻", "podcast": "🎙️", "youtube": "▶️", "generic": "🌍"}
+    icon = _CONTENT_ICONS.get(content_type, "🌍")
+    success, msg = start_player(
+        url, mode="audio_only", rfid_uid=rfid_code,
+        profile_name=profile.get("name"), profile_mode="web_media",
+        volume=profile.get("volume"),
+    )
+    if not success:
+        return False
+    media_runtime["current_rfid"] = rfid_code
+    media_runtime["current_profile_name"] = profile.get("name")
+    media_runtime["current_mode"] = "web_media"
+    media_runtime["web_content_type"] = content_type
+    media_runtime["web_media_url"] = url
+    bus.mark_dirty("media")
+    bus.request_emit("public")
+    bus.emit_notification(f"{icon} {profile.get('name', rfid_code)}", "success")
+    return True
+
+
+def _exec_ai_chat(rfid_code, profile):
+    """Logica pura per mode=ai_chat."""
+    from core.state import ai_runtime
+
+    ai_runtime["active_rfid"] = rfid_code
+    ai_runtime["active_profile_name"] = profile.get("name", "")
+    ai_runtime["extra_prompt"] = profile.get("ai_prompt", "")
+    bus.mark_dirty("ai")
+    bus.request_emit("public")
+    media_runtime["current_rfid"] = rfid_code
+    media_runtime["current_profile_name"] = profile.get("name")
+    media_runtime["current_mode"] = "ai_chat"
+    bus.mark_dirty("media")
+    bus.request_emit("public")
+    log(f"AI Chat attivata: profilo={profile.get('name')} prompt={profile.get('ai_prompt', '')[:60]}", "info")
+    bus.emit_notification(f"🦉 {profile.get('name', rfid_code)}", "success")
+    return True
+
+
+def _exec_rss_feed(rfid_code, profile):
+    """Logica pura per mode=rss_feed."""
+    rss_url = profile.get("rss_url", "")
+    rss_limit = profile.get("rss_limit", 10)
+    if not rss_url:
+        return False
+
+    items, err = _fetch_rss(rss_url, rss_limit)
+    if err:
+        log(f"Errore RSS per RFID {rfid_code}: {err}", "warning")
+        bus.emit_notification("Errore durante il fetch RSS", "warning")
+        return False
+
+    rss_state = {
+        "rfid_code": rfid_code, "profile_name": profile.get("name"),
+        "rss_url": rss_url, "fetched_at": int(time.time()), "items": items,
+    }
+    rss_runtime[rfid_code] = rss_state
+    bus.mark_dirty("rss")
+    bus.request_emit("public")
+    media_runtime["current_rfid"] = rfid_code
+    media_runtime["current_profile_name"] = profile.get("name")
+    media_runtime["current_mode"] = "rss_feed"
+    media_runtime["rss_state"] = rss_state
+    bus.mark_dirty("media")
+    bus.request_emit("public")
+    bus.emit_notification(f"📰 {profile.get('name', rfid_code)} — {len(items)} articoli", "success")
+    return True
+
+
+def _exec_edu_ai(rfid_code, profile):
+    """Logica pura per mode=edu_ai."""
+    from core.state import ai_runtime
+
+    edu_config = profile.get("edu_config")
+    if not edu_config:
+        log(f"Profilo RFID {rfid_code} edu_ai: edu_config mancante", "warning")
+        log_event("rfid", "warning", "Profilo RFID edu_ai senza edu_config",
+                  {"rfid_code": rfid_code, "profile_name": profile.get("name")})
+        bus.emit_notification("Configurazione educativa mancante nel profilo.", "warning")
+        return False
+
+    try:
+        from api.ai import apply_rfid_edu_config
+        apply_rfid_edu_config(edu_config)
+    except Exception as e:
+        log(f"Errore applicazione config educativa RFID {rfid_code}: {e}", "warning")
+        log_event("rfid", "error", "Errore attivazione AI educativa via RFID",
+                  {"rfid_code": rfid_code, "error": str(e)})
+        bus.emit_notification("Errore nell'attivazione AI educativa.", "error")
+        return False
+
+    ai_runtime["active_rfid"] = rfid_code
+    ai_runtime["active_profile_name"] = profile.get("name", "")
+    ai_runtime["edu_rfid_active"] = True
+    ai_runtime["history"] = []
+    bus.mark_dirty("ai")
+    bus.request_emit("public")
+    media_runtime["current_rfid"] = rfid_code
+    media_runtime["current_profile_name"] = profile.get("name")
+    media_runtime["current_mode"] = "edu_ai"
+    bus.mark_dirty("media")
+    bus.request_emit("public")
+
+    activity_mode = edu_config.get("activity_mode", "free_conversation")
+    age_group = edu_config.get("age_group", "bambino")
+    language_target = edu_config.get("language_target", "english")
+    learning_step = edu_config.get("learning_step", 1)
+    log_event("rfid", "info", "AI educativa attivata via RFID", {
+        "rfid_code": rfid_code, "profile_name": profile.get("name"),
+        "age_group": age_group, "activity_mode": activity_mode,
+        "language_target": language_target, "learning_step": learning_step,
+    })
+    log(f"AI educativa attivata: RFID={rfid_code} profilo={profile.get('name')} "
+        f"modalità={activity_mode} fascia={age_group}", "info")
+    bus.emit_notification(f"🎓 {profile.get('name', rfid_code)}", "success")
+    return True
+
+
+def _exec_wizard(rfid_code, profile):
+    """Logica pura per mode=school|entertainment (wizard)."""
+    from core.wizard import wizard_start
+
+    mode = profile.get("mode")
+    media_runtime["current_rfid"] = rfid_code
+    media_runtime["current_profile_name"] = profile.get("name")
+    media_runtime["current_mode"] = mode
+    bus.mark_dirty("media")
+    bus.request_emit("public")
+
+    wizard_result = wizard_start(source_category=mode, source_rfid=rfid_code)
+    if wizard_result.get("error"):
+        bus.emit_notification(f"Errore wizard: {wizard_result['error']}", "error")
+        return False
+
+    icon = "🏫" if mode == "school" else "🎮"
+    bus.emit_notification(f"{icon} {profile.get('name', rfid_code)} — Seleziona fascia d'età", "info")
+    log_event("rfid", "info", "Wizard avviato via RFID", {
+        "rfid_code": rfid_code, "profile_name": profile.get("name"), "category": mode,
+    })
+    return True
+
+
+# =========================================================
 # TRIGGER
 # =========================================================
 @rfid_bp.route("/rfid/trigger", methods=["POST"])

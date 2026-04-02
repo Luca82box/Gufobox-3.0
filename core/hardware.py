@@ -149,7 +149,8 @@ def _wake_for_alarm():
 
 def _sleep_timer_worker():
     """Controlla periodicamente se il timer di spegnimento è scaduto"""
-    while True:
+    from core.utils import is_shutdown_requested
+    while not is_shutdown_requested():
         eventlet.sleep(10)
         target = media_runtime.get("sleep_timer_target_ts")
         if target and now_ts() >= target:
@@ -167,8 +168,9 @@ def _alarm_worker():
     Debounce: la stessa sveglia non viene eseguita più di una volta per minuto.
     """
     from core.media import start_player
+    from core.utils import is_shutdown_requested
 
-    while True:
+    while not is_shutdown_requested():
         eventlet.sleep(30)
         now = datetime.now()
         weekday = now.weekday()  # 0=Lun, 6=Dom

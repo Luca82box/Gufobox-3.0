@@ -62,9 +62,10 @@ def _hex_to_color(hex_str):
 def _led_worker():
     """Thread in background che legge 'led_runtime' e disegna gli effetti"""
     if not strip: return
+    from core.utils import is_shutdown_requested
     
     step = 0
-    while True:
+    while not is_shutdown_requested():
         # 1. Controllo master (Se i LED sono disabilitati)
         # Leggi prima da 'applied' (nuovo schema), poi da campi legacy
         applied = led_runtime.get("applied", {})

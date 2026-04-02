@@ -152,8 +152,12 @@ def test_load_custom_led_effects_skips_invalid_json():
 # =========================================================
 def test_default_led_master_fields():
     from api.led import DEFAULT_LED_MASTER
-    for field in ("enabled", "effect_id", "color", "brightness", "speed", "override"):
+    # Top-level fields
+    for field in ("enabled", "override_active", "settings"):
         assert field in DEFAULT_LED_MASTER
+    # Settings sub-dict fields
+    for field in ("effect_id", "color", "brightness", "speed", "params"):
+        assert field in DEFAULT_LED_MASTER["settings"]
 
 
 def test_load_led_master_returns_default_when_no_file():
@@ -163,8 +167,8 @@ def test_load_led_master_returns_default_when_no_file():
     led_module.LED_MASTER_FILE = "/tmp/gufobox_test_led_master_nonexistent.json"
     result = load_led_master()
     led_module.LED_MASTER_FILE = original
-    assert result["effect_id"] == DEFAULT_LED_MASTER["effect_id"]
-    assert "override" in result
+    assert result["settings"]["effect_id"] == DEFAULT_LED_MASTER["settings"]["effect_id"]
+    assert "override_active" in result
 
 
 # =========================================================

@@ -6,6 +6,43 @@
       <p>Configura l'effetto LED globale e gestisci il catalogo effetti.</p>
     </div>
 
+    <!-- LED Status -->
+    <div class="card status-card">
+      <h3>Stato LED in tempo reale</h3>
+      <div v-if="status" class="status-grid">
+        <div class="status-item">
+          <span class="status-label">Sorgente attiva</span>
+          <span class="status-value source-badge" :class="'source-' + status.current_source">
+            {{ sourceLabel(status.current_source) }}
+          </span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">Effetto applicato</span>
+          <span class="status-value">{{ status.applied?.effect_id || status.effective_effect }}</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">Override attivo</span>
+          <span class="status-value" :class="{ 'text-green': status.override_active }">
+            {{ status.override_active ? 'Sì' : 'No' }}
+          </span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">RFID attivo</span>
+          <span class="status-value">{{ status.current_rfid || '—' }}</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">Stato AI</span>
+          <span class="status-value">{{ status.ai_state || '—' }}</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">LED abilitati</span>
+          <span class="status-value">{{ status.runtime?.master_enabled !== false ? 'Sì' : 'No' }}</span>
+        </div>
+      </div>
+      <div v-else class="loading-text">Caricamento stato... ⏳</div>
+      <button class="btn-refresh" @click="loadStatus">🔄 Aggiorna</button>
+    </div>
+
     <!-- Master LED config -->
     <div class="card">
       <div class="card-header">
@@ -14,32 +51,34 @@
       </div>
 
       <div v-if="loadingMaster" class="loading-text">Caricamento... ⏳</div>
-      <div v-else class="master-grid">
-        <div class="form-group">
-          <label>Effetto</label>
-          <select v-model="master.effect_id">
-            <option v-for="eff in effects" :key="eff.id" :value="eff.id">{{ eff.name }}</option>
-          </select>
+      <div v-else>
+        <div class="master-grid">
+          <div class="form-group">
+            <label>Effetto</label>
+            <select v-model="masterSettings.effect_id">
+              <option v-for="eff in effects" :key="eff.id" :value="eff.id">{{ eff.name }}</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Colore</label>
+            <input type="color" v-model="masterSettings.color" />
+          </div>
+          <div class="form-group">
+            <label>Luminosità {{ masterSettings.brightness }}%</label>
+            <input type="range" min="0" max="100" v-model.number="masterSettings.brightness" />
+          </div>
+          <div class="form-group">
+            <label>Velocità {{ masterSettings.speed }}%</label>
+            <input type="range" min="0" max="100" v-model.number="masterSettings.speed" />
+          </div>
         </div>
-        <div class="form-group">
-          <label>Colore</label>
-          <input type="color" v-model="master.color" />
-        </div>
-        <div class="form-group">
-          <label>Luminosità {{ master.brightness }}%</label>
-          <input type="range" min="0" max="100" v-model.number="master.brightness" />
-        </div>
-        <div class="form-group">
-          <label>Velocità {{ master.speed }}%</label>
-          <input type="range" min="0" max="100" v-model.number="master.speed" />
-        </div>
-      </div>
 
-      <div class="override-row">
-        <label class="override-label">
-          <input type="checkbox" v-model="master.override" />
-          Override globale (prevale sugli effetti statuine)
-        </label>
+        <div class="override-row">
+          <label class="override-label">
+            <input type="checkbox" v-model="masterOverrideActive" />
+            Override globale (prevale su RFID e default)
+          </label>
+        </div>
       </div>
 
       <div class="master-actions">
@@ -52,32 +91,10 @@
       </div>
     </div>
 
-    <!-- LED Status -->
-    <div class="card">
-      <h3>Stato LED</h3>
-      <div v-if="status" class="status-grid">
-        <div class="status-item">
-          <span class="status-label">Effetto attivo</span>
-          <span class="status-value">{{ status.effective_effect }}</span>
-        </div>
-        <div class="status-item">
-          <span class="status-label">Override attivo</span>
-          <span class="status-value" :class="{ 'text-green': status.override_active }">
-            {{ status.override_active ? 'Sì' : 'No' }}
-          </span>
-        </div>
-        <div class="status-item">
-          <span class="status-label">LED abilitati</span>
-          <span class="status-value">{{ status.runtime?.master_enabled ? 'Sì' : 'No' }}</span>
-        </div>
-      </div>
-      <button class="btn-refresh" @click="loadStatus">🔄 Aggiorna</button>
-    </div>
-
-    <!-- Catalogo Effetti Custom -->
+    <!-- Catalogo Effetti -->
     <div class="card">
       <div class="card-header">
-        <h3>Effetti LED Custom 🎨</h3>
+        <h3>Catalogo Effetti 🎨</h3>
         <div class="upload-area">
           <label class="btn-upload" title="Carica effetto da file JSON">
             📂 Carica da file
@@ -86,16 +103,22 @@
         </div>
       </div>
 
+      <div class="effects-legend">
+        <span class="chip-tag">builtin</span> = effetti predefiniti &nbsp;|&nbsp;
+        <span class="chip-tag custom-tag">custom</span> = effetti personalizzati
+      </div>
+
       <div class="effects-grid">
         <div
           v-for="eff in effects"
           :key="eff.id"
           class="effect-chip"
-          :class="{ builtin: eff.builtin, active: master.effect_id === eff.id }"
-          @click="master.effect_id = eff.id"
+          :class="{ builtin: eff.builtin, active: masterSettings.effect_id === eff.id }"
+          @click="masterSettings.effect_id = eff.id"
         >
           <span class="chip-name">{{ eff.name }}</span>
           <span v-if="eff.builtin" class="chip-tag">builtin</span>
+          <span v-else class="chip-tag custom-tag">custom</span>
           <button
             v-if="!eff.builtin"
             class="chip-delete"
@@ -123,25 +146,46 @@ const testing = ref(false)
 const effects = ref([])
 const status = ref(null)
 
-const master = reactive({
+// Settings sub-object (mirrors backend "settings" field)
+const masterSettings = reactive({
   effect_id: 'solid',
   color: '#0000ff',
   brightness: 70,
   speed: 30,
-  override: false,
 })
+// Override flag (mirrors backend "override_active" field)
+const masterOverrideActive = ref(false)
 
 const previewStyle = computed(() => ({
-  background: master.color,
-  opacity: master.brightness / 100,
+  background: masterSettings.color,
+  opacity: masterSettings.brightness / 100,
 }))
+
+function sourceLabel(src) {
+  const map = {
+    default: '🌐 Default',
+    master: '👑 Master',
+    rfid: '🏷️ RFID',
+    ai: '🤖 AI',
+    test: '🔬 Test',
+  }
+  return map[src] || src || '—'
+}
 
 async function loadMaster() {
   loadingMaster.value = true
   try {
     const api = getApi()
     const { data } = await guardedCall(() => api.get('/led/master'))
-    Object.assign(master, data)
+    // Handle new nested format
+    if (data.settings) {
+      Object.assign(masterSettings, data.settings)
+    } else {
+      // Backward compat with old flat format
+      const { effect_id, color, brightness, speed, params } = data
+      Object.assign(masterSettings, { effect_id, color, brightness, speed, params })
+    }
+    masterOverrideActive.value = data.override_active ?? data.override ?? false
   } catch (e) {
     console.error('Errore caricamento master LED:', extractApiError(e))
   } finally {
@@ -173,10 +217,11 @@ async function saveMaster() {
   saving.value = true
   try {
     const api = getApi()
-    await guardedCall(() => api.post('/led/master', { ...master }))
-    if (master.override !== undefined) {
-      await guardedCall(() => api.post('/led/master/override', { override: master.override }))
-    }
+    // Post new nested format
+    await guardedCall(() => api.post('/led/master', {
+      override_active: masterOverrideActive.value,
+      settings: { ...masterSettings },
+    }))
     await loadStatus()
     alert('Configurazione LED salvata!')
   } catch (e) {
@@ -191,10 +236,10 @@ async function testEffect() {
   try {
     const api = getApi()
     await guardedCall(() => api.post('/led/effects/test', {
-      effect_id: master.effect_id,
-      color: master.color,
-      brightness: master.brightness,
-      speed: master.speed,
+      effect_id: masterSettings.effect_id,
+      color: masterSettings.color,
+      brightness: masterSettings.brightness,
+      speed: masterSettings.speed,
     }))
   } catch (e) {
     alert(extractApiError(e, 'Errore test effetto'))
@@ -361,10 +406,12 @@ onMounted(() => {
 .btn-test:disabled { background: #555; color: #888; cursor: not-allowed; }
 
 /* Status */
+.status-card .card { margin-bottom: 0; }
+
 .status-grid {
   display: flex;
   flex-wrap: wrap;
-  gap: 15px;
+  gap: 12px;
   margin-bottom: 12px;
 }
 
@@ -375,11 +422,24 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 120px;
 }
 
 .status-label { font-size: 0.8rem; color: #aaa; }
-.status-value { font-weight: bold; color: #fff; }
+.status-value { font-weight: bold; color: #fff; font-size: 0.95rem; }
 .text-green { color: #4caf50; }
+
+.source-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.85rem;
+}
+.source-default { background: #333; color: #aaa; }
+.source-master { background: #4a3000; color: #ffd27b; }
+.source-rfid { background: #003040; color: #44ddff; }
+.source-ai { background: #200040; color: #cc88ff; }
+.source-test { background: #004020; color: #44ff88; }
 
 .btn-refresh {
   background: transparent;
@@ -388,6 +448,13 @@ onMounted(() => {
   padding: 8px 15px;
   border-radius: 8px;
   cursor: pointer;
+}
+
+/* Effects legend */
+.effects-legend {
+  font-size: 0.82rem;
+  color: #888;
+  margin: 8px 0 4px 0;
 }
 
 /* Effects grid */
@@ -421,9 +488,7 @@ onMounted(() => {
   font-size: 0.9rem;
 }
 
-.effect-chip:hover {
-  background: #2a2a35;
-}
+.effect-chip:hover { background: #2a2a35; }
 
 .effect-chip.active {
   border-color: #ffd27b;
@@ -435,6 +500,7 @@ onMounted(() => {
 
 .chip-name { color: #fff; }
 .chip-tag { font-size: 0.7rem; color: #888; background: #333; padding: 2px 6px; border-radius: 10px; }
+.custom-tag { color: #44ddff; background: #002030; }
 
 .chip-delete {
   background: transparent;

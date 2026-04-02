@@ -1,10 +1,10 @@
 import os
 import re
 import json
-import uuid
+import time
 
 from flask import Blueprint, request, jsonify
-from core.state import led_runtime, bus, save_json_direct
+from core.state import led_runtime, bus, save_json_direct, now_ts
 from core.utils import log
 from config import LED_EFFECTS_CUSTOM_DIR, LED_MASTER_FILE
 
@@ -55,9 +55,78 @@ BUILTIN_LED_EFFECTS = {
         "description": "Impulso rapido di luce",
         "params": {"color": "#ff9900", "speed": 60},
     },
+    "random": {
+        "id": "random",
+        "name": "Casuale",
+        "builtin": True,
+        "description": "Colori casuali su ogni LED",
+        "params": {"speed": 40},
+    },
 }
 
+# =========================================================
+# AI → LED MAP
+# =========================================================
+AI_LED_MAP = {
+    "idle": {
+        "enabled": True,
+        "effect_id": "breathing",
+        "color": "#0044ff",
+        "brightness": 40,
+        "speed": 20,
+        "params": {},
+    },
+    "listening": {
+        "enabled": True,
+        "effect_id": "pulse",
+        "color": "#00ff88",
+        "brightness": 70,
+        "speed": 60,
+        "params": {},
+    },
+    "thinking": {
+        "enabled": True,
+        "effect_id": "breathing",
+        "color": "#ffaa00",
+        "brightness": 60,
+        "speed": 40,
+        "params": {},
+    },
+    "speaking": {
+        "enabled": True,
+        "effect_id": "solid",
+        "color": "#44ddff",
+        "brightness": 80,
+        "speed": 30,
+        "params": {},
+    },
+    "error": {
+        "enabled": True,
+        "effect_id": "blink",
+        "color": "#ff2200",
+        "brightness": 90,
+        "speed": 70,
+        "params": {},
+    },
+}
+
+# =========================================================
+# DEFAULT ASSIGNMENT
+# =========================================================
+DEFAULT_LED_ASSIGNMENT = {
+    "enabled": True,
+    "effect_id": "solid",
+    "color": "#0000ff",
+    "brightness": 70,
+    "speed": 30,
+    "params": {},
+}
+
+# =========================================================
+# VALIDATION HELPERS
+# =========================================================
 _EFFECT_ID_RE = re.compile(r'^[a-zA-Z0-9_\-]{1,64}$')
+_COLOR_HEX_RE = re.compile(r'^#[0-9a-fA-F]{6}$')
 
 
 def _sanitize_effect_id(effect_id):
@@ -74,7 +143,6 @@ def _safe_effect_path(safe_id):
     Verifica anche tramite realpath che il percorso risultante sia dentro LED_EFFECTS_CUSTOM_DIR.
     """
     custom_root = os.path.realpath(LED_EFFECTS_CUSTOM_DIR)
-    # os.path.basename è riconosciuto come sanitizzatore path da CodeQL
     safe_filename = os.path.basename(f"{safe_id}.json")
     if not safe_filename.endswith(".json") or safe_filename == ".json":
         return None
@@ -84,21 +152,76 @@ def _safe_effect_path(safe_id):
     return fpath
 
 
+def validate_led_assignment(assignment):
+    """
+    Valida un LED assignment completo.
+    Ritorna (True, None) se valido, (False, errore) altrimenti.
+    """
+    if not isinstance(assignment, dict):
+        return False, "Assignment deve essere un oggetto JSON"
+    effect_id = assignment.get("effect_id", "")
+    if not isinstance(effect_id, str) or not effect_id:
+        return False, "effect_id mancante o non valido"
+    if not _sanitize_effect_id(effect_id):
+        return False, "effect_id contiene caratteri non consentiti"
+    color = assignment.get("color", "#000000")
+    if not isinstance(color, str) or not _COLOR_HEX_RE.match(color):
+        return False, f"Colore '{color}' non valido: usa formato #rrggbb"
+    brightness = assignment.get("brightness", 70)
+    if not isinstance(brightness, (int, float)) or not (0 <= brightness <= 100):
+        return False, "brightness deve essere tra 0 e 100"
+    speed = assignment.get("speed", 30)
+    if not isinstance(speed, (int, float)) or not (0 <= speed <= 100):
+        return False, "speed deve essere tra 0 e 100"
+    params = assignment.get("params", {})
+    if not isinstance(params, dict):
+        return False, "params deve essere un oggetto JSON"
+    return True, None
+
+
 REQUIRED_EFFECT_FIELDS = {"id", "name"}
 
+# Custom effect types that require extra shape validation
+_CUSTOM_TYPES_REQUIRED = {
+    "sequence": "steps",
+    "random_mix": "pool",
+    "scene": "slots",
+}
 
-def _validate_custom_effect(data):
-    """Valida un effetto LED custom caricato da file JSON."""
+
+def validate_custom_led_effect(data):
+    """
+    Valida un effetto LED custom (struttura JSON completa).
+    Supporta tipi standard, sequence, random_mix, scene.
+    Ritorna (True, None) o (False, messaggio).
+    """
     if not isinstance(data, dict):
         return False, "L'effetto deve essere un oggetto JSON"
     missing = REQUIRED_EFFECT_FIELDS - set(data.keys())
     if missing:
         return False, f"Campi obbligatori mancanti: {missing}"
-    if not isinstance(data.get("id"), str) or not data["id"].strip():
+    effect_id = data.get("id")
+    if not isinstance(effect_id, str) or not effect_id.strip():
         return False, "Il campo 'id' deve essere una stringa non vuota"
-    if data["id"] in BUILTIN_LED_EFFECTS:
-        return False, f"L'id '{data['id']}' è riservato a un effetto builtin"
+    if effect_id in BUILTIN_LED_EFFECTS:
+        return False, f"L'id '{effect_id}' è riservato a un effetto builtin"
+    if not _sanitize_effect_id(effect_id):
+        return False, "effect_id contiene caratteri non consentiti"
+    # Type-specific shape check
+    etype = data.get("type")
+    if etype in _CUSTOM_TYPES_REQUIRED:
+        required_key = _CUSTOM_TYPES_REQUIRED[etype]
+        items = data.get(required_key)
+        if not isinstance(items, list) or len(items) == 0:
+            return False, f"Effetto di tipo '{etype}' deve avere un array '{required_key}' non vuoto"
+    params = data.get("params")
+    if params is not None and not isinstance(params, dict):
+        return False, "Il campo 'params' deve essere un oggetto JSON"
     return True, None
+
+
+# Internal alias kept for backward compatibility with existing tests
+_validate_custom_effect = validate_custom_led_effect
 
 
 def load_custom_led_effects():
@@ -113,7 +236,7 @@ def load_custom_led_effects():
         try:
             with open(fpath, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            ok, _ = _validate_custom_effect(data)
+            ok, _ = validate_custom_led_effect(data)
             if ok:
                 effects[data["id"]] = data
         except Exception as e:
@@ -133,12 +256,15 @@ def _get_all_effects():
 # =========================================================
 DEFAULT_LED_MASTER = {
     "enabled": True,
-    "effect_id": "solid",
-    "color": "#0000ff",
-    "brightness": 70,
-    "speed": 30,
-    "override": False,
-    "params": {},
+    "override_active": False,
+    "settings": {
+        "enabled": True,
+        "effect_id": "solid",
+        "color": "#0000ff",
+        "brightness": 70,
+        "speed": 30,
+        "params": {},
+    },
 }
 
 
@@ -147,28 +273,125 @@ def load_led_master():
         try:
             with open(LED_MASTER_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
+            # Migrate old flat format to new nested format
+            data = _migrate_master(data)
             return data
         except Exception as e:
             log(f"Errore lettura led_master: {e}", "warning")
-    return dict(DEFAULT_LED_MASTER)
+    import copy
+    return copy.deepcopy(DEFAULT_LED_MASTER)
+
+
+def _migrate_master(data):
+    """Migrates old flat master format to the new nested settings format."""
+    if "settings" not in data:
+        # Old flat format: promote flat fields into settings
+        settings = {
+            "enabled": data.get("enabled", True),
+            "effect_id": data.get("effect_id", "solid"),
+            "color": data.get("color", "#0000ff"),
+            "brightness": data.get("brightness", 70),
+            "speed": data.get("speed", 30),
+            "params": data.get("params", {}),
+        }
+        # Resolve override field name
+        override_active = data.get("override_active", data.get("override", False))
+        return {
+            "enabled": data.get("enabled", True),
+            "override_active": override_active,
+            "settings": settings,
+        }
+    # Ensure override_active key exists (migrate from old "override" key)
+    if "override" in data and "override_active" not in data:
+        data["override_active"] = data.pop("override")
+    return data
 
 
 def save_led_master(data):
     save_json_direct(LED_MASTER_FILE, data)
 
 
+# =========================================================
+# GERARCHIA SORGENTI LED
+# =========================================================
+
+def get_effective_led_assignment():
+    """
+    Calcola l'assignment LED effettivo secondo la gerarchia di priorità:
+      1. AI state attivo
+      2. Master override attivo
+      3. Profilo RFID attivo con blocco LED
+      4. Default di sistema
+    Ritorna (assignment_dict, source_str).
+    """
+    from core.state import rfid_map
+
+    # 1. AI state
+    ai_state = led_runtime.get("ai_state")
+    if ai_state and ai_state in AI_LED_MAP:
+        return AI_LED_MAP[ai_state].copy(), "ai"
+
+    # 2. Master override
+    master = load_led_master()
+    if master.get("override_active") and master.get("enabled", True):
+        settings = master.get("settings", {})
+        assignment = {
+            "enabled": settings.get("enabled", True),
+            "effect_id": settings.get("effect_id", "solid"),
+            "color": settings.get("color", "#0000ff"),
+            "brightness": int(settings.get("brightness", 70)),
+            "speed": int(settings.get("speed", 30)),
+            "params": settings.get("params", {}),
+        }
+        return assignment, "master"
+
+    # 3. Active RFID profile with LED block
+    current_rfid = led_runtime.get("current_rfid")
+    if current_rfid:
+        profile = rfid_map.get(current_rfid, {})
+        led_block = profile.get("led")
+        if led_block and led_block.get("enabled"):
+            assignment = {
+                "enabled": True,
+                "effect_id": led_block.get("effect_id", "solid"),
+                "color": led_block.get("color", "#ffffff"),
+                "brightness": int(led_block.get("brightness", 70)),
+                "speed": int(led_block.get("speed", 30)),
+                "params": led_block.get("params", {}),
+            }
+            return assignment, "rfid"
+
+    # 4. Default
+    return DEFAULT_LED_ASSIGNMENT.copy(), "default"
+
+
 def refresh_effective_led():
     """
-    Ricalcola l'effetto LED effettivo in base a override master / RFID / default.
-    Aggiorna led_runtime e notifica l'EventBus.
+    Ricalcola l'effetto LED effettivo secondo la gerarchia e aggiorna
+    led_runtime e notifica l'EventBus.
     """
-    master = load_led_master()
-    if master.get("override"):
-        led_runtime["current_effect"] = master.get("effect_id", "solid")
-        led_runtime["master_color"] = master.get("color", "#0000ff")
-        led_runtime["master_brightness"] = master.get("brightness", 70)
-        led_runtime["master_speed"] = master.get("speed", 30)
-    # Se non c'è override, l'effetto RFID corrente (impostato da rfid_trigger) rimane
+    assignment, source = get_effective_led_assignment()
+
+    # Validate assignment; fall back to default on invalid
+    ok, err = validate_led_assignment(assignment)
+    if not ok:
+        log(f"refresh_effective_led: assignment invalido ({err}), fallback a default", "warning")
+        assignment = DEFAULT_LED_ASSIGNMENT.copy()
+        source = "default"
+
+    # Update new-style fields
+    led_runtime["applied"] = assignment
+    led_runtime["current_source"] = source
+    led_runtime["master_override_active"] = source == "master"
+    led_runtime["last_updated_ts"] = now_ts()
+
+    # Update legacy fields for hw/led.py backward compatibility
+    led_runtime["current_effect"] = assignment["effect_id"]
+    led_runtime["master_color"] = assignment.get("color", "#0000ff")
+    led_runtime["master_brightness"] = assignment.get("brightness", 70)
+    led_runtime["master_speed"] = assignment.get("speed", 30)
+    led_runtime["master_enabled"] = assignment.get("enabled", True)
+
     bus.mark_dirty("led")
     bus.request_emit("public")
 
@@ -188,7 +411,7 @@ def api_led_effects_get():
 def api_led_effects_post():
     """Aggiunge un effetto LED custom via JSON nel body."""
     data = request.get_json(silent=True) or {}
-    ok, err = _validate_custom_effect(data)
+    ok, err = validate_custom_led_effect(data)
     if not ok:
         return jsonify({"error": err}), 400
 
@@ -202,6 +425,7 @@ def api_led_effects_post():
     data["id"] = safe_id
     data["builtin"] = False
     try:
+        os.makedirs(LED_EFFECTS_CUSTOM_DIR, exist_ok=True)
         with open(fpath, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         log(f"Effetto LED custom '{safe_id}' salvato", "info")
@@ -227,7 +451,7 @@ def api_led_effects_upload():
     except Exception:
         return jsonify({"error": "File JSON non valido"}), 400
 
-    ok, err = _validate_custom_effect(data)
+    ok, err = validate_custom_led_effect(data)
     if not ok:
         return jsonify({"error": err}), 400
 
@@ -241,6 +465,7 @@ def api_led_effects_upload():
     data["id"] = safe_id
     data["builtin"] = False
     try:
+        os.makedirs(LED_EFFECTS_CUSTOM_DIR, exist_ok=True)
         with open(fpath, "w", encoding="utf-8") as fp:
             json.dump(data, fp, ensure_ascii=False, indent=2)
         log(f"Effetto LED custom '{safe_id}' caricato da file", "info")
@@ -288,13 +513,26 @@ def api_led_effects_test():
     if effect_id not in all_effects:
         return jsonify({"error": f"Effetto '{effect_id}' non trovato"}), 404
 
+    # Build a temporary assignment for preview (does not persist to master)
+    color = data.get("color", led_runtime.get("master_color", "#0000ff"))
+    brightness = int(data.get("brightness", led_runtime.get("master_brightness", 70)))
+    speed = int(data.get("speed", led_runtime.get("master_speed", 30)))
+
+    # Validate the test assignment
+    test_assignment = {"effect_id": effect_id, "color": color, "brightness": brightness,
+                       "speed": speed, "params": data.get("params", {})}
+    ok, err = validate_led_assignment(test_assignment)
+    if not ok:
+        return jsonify({"error": err}), 400
+
+    # Apply directly to runtime (temporary, not persisted)
     led_runtime["current_effect"] = effect_id
-    if "color" in data:
-        led_runtime["master_color"] = data["color"]
-    if "brightness" in data:
-        led_runtime["master_brightness"] = int(data["brightness"])
-    if "speed" in data:
-        led_runtime["master_speed"] = int(data["speed"])
+    led_runtime["master_color"] = color
+    led_runtime["master_brightness"] = brightness
+    led_runtime["master_speed"] = speed
+    led_runtime["applied"] = {**test_assignment, "enabled": True}
+    led_runtime["current_source"] = "test"
+    led_runtime["last_updated_ts"] = now_ts()
     bus.mark_dirty("led")
     bus.request_emit("public")
 
@@ -317,27 +555,51 @@ def api_led_master_get():
 def api_led_master_post():
     """
     Salva la configurazione master LED.
-    Payload: {"effect_id": "rainbow", "color": "#ff9900", "brightness": 70, "speed": 30}
+    Payload (nuovo formato):
+      {"enabled": true, "override_active": false, "settings": {"effect_id": "rainbow", "color": "#ff9900", ...}}
+    Oppure payload flat (backward compat):
+      {"effect_id": "rainbow", "color": "#ff9900", "brightness": 70, "speed": 30}
     """
     data = request.get_json(silent=True) or {}
     master = load_led_master()
 
     all_effects = _get_all_effects()
-    effect_id = data.get("effect_id", master.get("effect_id", "solid"))
+
+    # Detect new nested format vs old flat format
+    if "settings" in data:
+        settings_in = data["settings"]
+        if "enabled" in data:
+            master["enabled"] = bool(data["enabled"])
+        if "override_active" in data:
+            master["override_active"] = bool(data["override_active"])
+    else:
+        # Backward compat: flat payload → treat as settings
+        settings_in = data
+        if "override_active" in data:
+            master["override_active"] = bool(data["override_active"])
+        elif "override" in data:
+            master["override_active"] = bool(data["override"])
+
+    # Apply settings fields
+    settings = master.setdefault("settings", {})
+    effect_id = settings_in.get("effect_id", settings.get("effect_id", "solid"))
     if effect_id not in all_effects:
         return jsonify({"error": f"Effetto '{effect_id}' non trovato"}), 400
+    settings["effect_id"] = effect_id
 
-    master["effect_id"] = effect_id
-    if "color" in data:
-        master["color"] = str(data["color"])
-    if "brightness" in data:
-        master["brightness"] = max(0, min(100, int(data["brightness"])))
-    if "speed" in data:
-        master["speed"] = max(0, min(100, int(data["speed"])))
-    if "enabled" in data:
-        master["enabled"] = bool(data["enabled"])
-    if "params" in data:
-        master["params"] = data["params"]
+    if "color" in settings_in:
+        color = str(settings_in["color"])
+        if not _COLOR_HEX_RE.match(color):
+            return jsonify({"error": f"Colore '{color}' non valido"}), 400
+        settings["color"] = color
+    if "brightness" in settings_in:
+        settings["brightness"] = max(0, min(100, int(settings_in["brightness"])))
+    if "speed" in settings_in:
+        settings["speed"] = max(0, min(100, int(settings_in["speed"])))
+    if "enabled" in settings_in:
+        settings["enabled"] = bool(settings_in["enabled"])
+    if "params" in settings_in:
+        settings["params"] = settings_in["params"]
 
     save_led_master(master)
     refresh_effective_led()
@@ -350,13 +612,13 @@ def api_led_master_post():
 def api_led_master_override():
     """
     Attiva/disattiva l'override master LED.
-    Quando override è True, il master LED prevale sugli effetti RFID.
-    Payload: {"override": true}
+    Payload: {"override_active": true}  oppure  {"override": true}  (compat)
     """
     data = request.get_json(silent=True) or {}
-    override = bool(data.get("override", False))
+    # Accept both key names for backward compat
+    override = bool(data.get("override_active", data.get("override", False)))
     master = load_led_master()
-    master["override"] = override
+    master["override_active"] = override
     save_led_master(master)
     refresh_effective_led()
 
@@ -364,7 +626,7 @@ def api_led_master_override():
     bus.emit_notification(
         f"Override LED {'attivato' if override else 'disattivato'}", "info"
     )
-    return jsonify({"status": "ok", "override": override})
+    return jsonify({"status": "ok", "override_active": override})
 
 
 @led_bp.route("/led/status", methods=["GET"])
@@ -374,6 +636,37 @@ def api_led_status():
     return jsonify({
         "runtime": led_runtime,
         "master": master,
-        "override_active": master.get("override", False),
+        "override_active": master.get("override_active", False),
         "effective_effect": led_runtime.get("current_effect", "solid"),
+        "current_source": led_runtime.get("current_source", "default"),
+        "applied": led_runtime.get("applied", DEFAULT_LED_ASSIGNMENT.copy()),
+        "current_rfid": led_runtime.get("current_rfid"),
+        "ai_state": led_runtime.get("ai_state"),
+        "last_updated_ts": led_runtime.get("last_updated_ts", 0),
     })
+
+
+# =========================================================
+# AI STATE → LED
+# =========================================================
+
+@led_bp.route("/led/ai_state", methods=["POST"])
+def api_led_ai_state():
+    """
+    Aggiorna lo stato AI nel runtime LED e ricalcola l'effetto effettivo.
+    Payload: {"state": "listening"}  oppure  {"state": null}  per resettare.
+    Chiamata internamente da api/ai.py quando cambia lo stato AI.
+    """
+    data = request.get_json(silent=True) or {}
+    ai_state = data.get("state")
+
+    if ai_state is not None and ai_state not in AI_LED_MAP:
+        return jsonify({"error": f"Stato AI '{ai_state}' non riconosciuto. "
+                                  f"Valori validi: {list(AI_LED_MAP.keys())}"}), 400
+
+    led_runtime["ai_state"] = ai_state
+    refresh_effective_led()
+
+    log(f"Stato AI LED aggiornato: {ai_state}", "info")
+    return jsonify({"status": "ok", "ai_state": ai_state,
+                    "current_source": led_runtime.get("current_source")})

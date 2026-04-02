@@ -4,7 +4,7 @@ from flask import Blueprint, request, jsonify, send_file
 
 # Importiamo la configurazione e lo stato
 from config import AI_SETTINGS_FILE, AI_TTS_CACHE_DIR, OPENAI_API_KEY
-from core.state import ai_runtime, bus, load_json, save_json_direct
+from core.state import ai_runtime, led_runtime, bus, load_json, save_json_direct
 from core.utils import log
 
 # Proviamo a importare OpenAI (se installato)
@@ -22,6 +22,19 @@ ai_settings = load_json(AI_SETTINGS_FILE, {
     "tts_provider": "browser",
     "openai_api_key": OPENAI_API_KEY
 })
+
+
+def _set_ai_led_state(state):
+    """
+    Aggiorna lo stato AI nel runtime LED e ricalcola l'effetto effettivo.
+    state: "idle" | "listening" | "thinking" | "speaking" | "error" | None
+    """
+    try:
+        from api.led import refresh_effective_led
+        led_runtime["ai_state"] = state
+        refresh_effective_led()
+    except Exception as e:
+        log(f"Errore aggiornamento LED per stato AI '{state}': {e}", "warning")
 
 def get_openai_client():
     """Inizializza il client OpenAI usando la chiave salvata nelle impostazioni"""
@@ -82,6 +95,7 @@ def api_ai_chat():
     ai_runtime["is_thinking"] = True
     bus.mark_dirty("ai")
     bus.request_emit("public")
+    _set_ai_led_state("thinking")
 
     try:
         # 2. Prepariamo i messaggi per OpenAI
@@ -123,12 +137,14 @@ def api_ai_chat():
         ai_runtime["is_thinking"] = False
         bus.mark_dirty("ai")
         bus.request_emit("public")
+        _set_ai_led_state("error")
         return jsonify({"error": str(e)}), 500
 
     # Fine elaborazione
     ai_runtime["is_thinking"] = False
     bus.mark_dirty("ai")
     bus.request_emit("public")
+    _set_ai_led_state("speaking")
 
     return jsonify({
         "status": "ok",

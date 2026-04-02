@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify
 
 # Importiamo lo stato globale, il bus degli eventi e le utility
-from core.state import media_runtime, rfid_map, bus, save_json_direct
+from core.state import media_runtime, rfid_map, led_runtime, bus, save_json_direct
 from config import RFID_MAP_FILE
 from core.utils import log, run_cmd
 
@@ -181,9 +181,25 @@ def api_rfid_delete():
         del rfid_map[uid]
         save_json_direct(RFID_MAP_FILE, rfid_map)
         log(f"Associazione RFID {uid} eliminata", "info")
+        # If the deleted profile was the active LED source, reset it
+        if led_runtime.get("current_rfid") == uid:
+            led_runtime["current_rfid"] = None
+            _refresh_led_from_rfid()
         return jsonify({"status": "ok"})
         
     return jsonify({"error": "UID non trovato"}), 404
+
+# =========================================================
+# LED HELPER — chiamato dal trigger RFID
+# =========================================================
+def _refresh_led_from_rfid():
+    """Aggiorna il runtime LED dopo un cambio di profilo RFID attivo."""
+    try:
+        from api.led import refresh_effective_led
+        refresh_effective_led()
+    except Exception as e:
+        log(f"Errore refresh LED da RFID: {e}", "warning")
+
 
 # =========================================================
 # TRIGGER FISICO DELLA STATUINA (Dal lettore hardware)
@@ -205,6 +221,10 @@ def api_rfid_trigger():
         return jsonify({"error": "Statuina non associata", "uid": uid}), 404
         
     target = associazione.get("target")
+
+    # Update LED runtime with RFID profile
+    led_runtime["current_rfid"] = uid
+    _refresh_led_from_rfid()
     
     # 🔀 BIVIO: È un link Web (YouTube/Radio/Podcast) o un file MP3 locale?
     if target.startswith("http://") or target.startswith("https://"):

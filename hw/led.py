@@ -65,16 +65,21 @@ def _led_worker():
     
     step = 0
     while True:
-        # 1. Controllo master (Se i LED sono disabilitati dal genitore)
-        if not led_runtime.get("master_enabled", True):
+        # 1. Controllo master (Se i LED sono disabilitati)
+        # Leggi prima da 'applied' (nuovo schema), poi da campi legacy
+        applied = led_runtime.get("applied", {})
+        master_enabled = applied.get("enabled", led_runtime.get("master_enabled", True))
+        if not master_enabled:
             set_all_color(Color(0, 0, 0)) # Spegni tutto
             eventlet.sleep(1)
             continue
             
-        effect = led_runtime.get("current_effect", "solid")
-        color_hex = led_runtime.get("master_color", "#0000ff")
-        speed = max(1, led_runtime.get("master_speed", 30))
-        brightness_pct = led_runtime.get("master_brightness", 70)
+        effect = applied.get("effect_id") or led_runtime.get("current_effect", "solid")
+        color_hex = applied.get("color") or led_runtime.get("master_color", "#0000ff")
+        speed = max(1, applied.get("speed") if applied.get("speed") is not None
+                    else led_runtime.get("master_speed", 30))
+        brightness_pct = (applied.get("brightness") if applied.get("brightness") is not None
+                          else led_runtime.get("master_brightness", 70))
         strip.setBrightness(int(brightness_pct * 255 / 100))
 
         # Calcola sleep in base alla velocità (1-100 -> 0.01-1s)

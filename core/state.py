@@ -78,6 +78,21 @@ DEFAULT_MEDIA_RUNTIME = {
     "rss_state": None,
 }
 DEFAULT_LED_RUNTIME = {
+    # --- New PR3 fields ---
+    "master_override_active": False,
+    "current_source": "default",   # "default" | "master" | "rfid" | "ai"
+    "current_rfid": None,          # UID of the active RFID profile driving LEDs
+    "ai_state": None,              # Active AI state driving LEDs (idle/listening/…)
+    "applied": {                   # Full assignment currently applied
+        "enabled": True,
+        "effect_id": "solid",
+        "color": "#0000ff",
+        "brightness": 70,
+        "speed": 30,
+        "params": {},
+    },
+    "last_updated_ts": 0,
+    # --- Legacy fields kept for hw/led.py backward compatibility ---
     "master_enabled": True,
     "current_effect": "solid",
     "master_color": "#0000ff",

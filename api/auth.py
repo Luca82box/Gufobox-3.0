@@ -17,6 +17,7 @@ from flask import Blueprint, request, jsonify, session
 
 from core.state import state, bus, save_json_direct
 from core.utils import log
+from core.event_log import log_event
 from config import STATE_FILE
 
 auth_bp = Blueprint("auth", __name__)
@@ -111,6 +112,7 @@ def api_admin_login():
 
         log("Login admin riuscito", "info")
         bus.emit_notification("Accesso admin effettuato 🔓", "info")
+        log_event("auth", "info", "Login admin riuscito")
         return jsonify({"status": "ok", "admin_token": token})
 
     else:
@@ -120,6 +122,9 @@ def api_admin_login():
             auth["locked_until"] = int(time.time()) + _LOCKOUT_SECS
             log(f"Admin bloccato per {_LOCKOUT_SECS}s dopo {_MAX_FAILS} tentativi", "warning")
             bus.emit_notification("Troppi PIN errati — accesso bloccato ⛔", "warning")
+            log_event("auth", "warning", f"Admin bloccato dopo {_MAX_FAILS} tentativi errati")
+        else:
+            log_event("auth", "warning", "Tentativo login admin fallito (PIN errato)")
 
         bus.mark_dirty("state")
         save_json_direct(STATE_FILE, state)
@@ -167,6 +172,7 @@ def api_auth_logout():
     save_json_direct(STATE_FILE, state)
 
     log("Logout admin", "info")
+    log_event("auth", "info", "Logout admin")
     return jsonify({"status": "ok"})
 
 

@@ -1,18 +1,23 @@
 """
 api/diag.py — Endpoints per metriche di sistema e diagnostica.
 
-  GET /api/admin/metrics   — CPU, RAM, disco, batteria, temperatura
-  GET /api/diag/summary    — riepilogo diagnostico
-  GET /api/diag/tools      — verifica strumenti di sistema disponibili
+  GET  /api/admin/metrics     — CPU, RAM, disco, batteria, temperatura
+  GET  /api/diag/summary      — riepilogo diagnostico
+  GET  /api/diag/tools        — verifica strumenti di sistema disponibili
+  GET  /api/diag/events       — event log operativo (ring buffer)
+  POST /api/diag/selfcheck    — self-check operativo completo
+  GET  /api/diag/export       — export diagnostica JSON
 """
 
 import os
 import shutil
+from datetime import datetime, timezone
 
-from flask import jsonify
+from flask import jsonify, request
 
 from flask import Blueprint
 from core.utils import log, run_cmd
+from core.event_log import get_events, log_event
 
 diag_bp = Blueprint("diag", __name__)
 
@@ -328,4 +333,240 @@ def api_diag_tools():
     return jsonify({
         "tools": result,
         "all_critical_ok": all_critical,
+    })
+
+
+# ─── event log ───────────────────────────────────────────────────────────────
+
+@diag_bp.route("/diag/events", methods=["GET"])
+def api_diag_events():
+    """
+    Restituisce gli eventi operativi recenti (ring buffer).
+    Query param: ?limit=N  (default 100, max 500)
+    """
+    try:
+        limit = int(request.args.get("limit", 100))
+        limit = max(1, min(limit, 500))
+    except (ValueError, TypeError):
+        limit = 100
+    events = get_events(limit=limit)
+    return jsonify({"events": events, "count": len(events)})
+
+
+# ─── self-check ──────────────────────────────────────────────────────────────
+
+def _run_selfcheck() -> dict:
+    """
+    Esegue un self-check operativo completo.
+    Restituisce un dizionario con ok, checks, warnings, errors e note.
+    """
+    checks = []
+    warnings = []
+    errors = []
+
+    def _add(name: str, ok: bool, note: str | None = None, detail: str | None = None):
+        entry = {"name": name, "ok": ok}
+        if note:
+            entry["note"] = note
+        if detail:
+            entry["detail"] = detail
+        checks.append(entry)
+        if not ok:
+            if note:
+                errors.append(f"{name}: {note}")
+            else:
+                errors.append(name)
+
+    # --- essential tools ---
+    for tool in ("mpv", "git", "python3"):
+        present = _check_tool(tool)
+        _add(f"tool:{tool}", present,
+             note=None if present else f"{tool} non trovato")
+
+    # --- audio readiness ---
+    audio = _readiness_audio()
+    _add("audio:mpv", audio["mpv"],
+         note="mpv non trovato: riproduzione audio non disponibile" if not audio["mpv"] else None)
+    _add("audio:amixer", audio["amixer"],
+         note="amixer non trovato: controllo volume potrebbe non funzionare" if not audio["amixer"] else None)
+    if audio.get("note") and not audio["ok"]:
+        warnings.append(f"Audio: {audio['note']}")
+
+    # --- network readiness ---
+    net = _readiness_network()
+    _add("network:nmcli", net["nmcli"],
+         note=net.get("note") if not net["nmcli"] else None)
+    if not net["nmcli"]:
+        warnings.append("Network: nmcli non trovato — gestione Wi-Fi/hotspot non disponibile")
+
+    # --- bluetooth readiness ---
+    bt = _readiness_bluetooth()
+    _add("bluetooth:bluetoothctl", bt["bluetoothctl"],
+         note=bt.get("note") if not bt["bluetoothctl"] else None)
+    _add("bluetooth:controller", bt["controller_available"],
+         note="Controller Bluetooth non rilevato" if not bt["controller_available"] else None)
+    if bt.get("note") and not bt["ok"]:
+        warnings.append(f"Bluetooth: {bt['note']}")
+
+    # --- standby / alarm readiness ---
+    sa = _readiness_standby_alarm()
+    _add("standby:vcgencmd", sa["vcgencmd"],
+         note="vcgencmd non trovato: HDMI power management non disponibile" if not sa["vcgencmd"] else None)
+    _add("standby:cpufreq-set", sa["cpufreq_set"],
+         note="cpufreq-set non trovato: CPU scaling non disponibile" if not sa["cpufreq_set"] else None)
+    if sa.get("note"):
+        warnings.append(f"Standby: {sa['note']}")
+
+    # --- system resources ---
+    ram = _ram_info()
+    disk = _disk_info()
+    cpu_temp = _cpu_temperature()
+
+    ram_ok = ram.get("percent") is None or ram["percent"] < 90
+    disk_ok = disk.get("percent") is None or disk["percent"] < 90
+    temp_ok = cpu_temp is None or cpu_temp < 75
+
+    _add("system:ram", ram_ok,
+         note=f"RAM elevata: {ram.get('percent')}%" if not ram_ok else None)
+    _add("system:disk", disk_ok,
+         note=f"Disco quasi pieno: {disk.get('percent')}%" if not disk_ok else None)
+    _add("system:cpu_temp", temp_ok,
+         note=f"Temperatura CPU elevata: {cpu_temp}°C" if not temp_ok else None)
+
+    if not ram_ok:
+        warnings.append(f"RAM quasi esaurita: {ram.get('percent')}%")
+    if not disk_ok:
+        warnings.append(f"Disco quasi pieno: {disk.get('percent')}%")
+    if not temp_ok:
+        warnings.append(f"Temperatura CPU elevata: {cpu_temp}°C")
+
+    overall_ok = len(errors) == 0
+    return {
+        "ok": overall_ok,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "checks": checks,
+        "warnings": warnings,
+        "errors": errors,
+        "note": "Self-check completato — alcuni strumenti potrebbero essere assenti fuori da RPi" if not overall_ok else "Tutti i controlli principali superati",
+    }
+
+
+@diag_bp.route("/diag/selfcheck", methods=["POST"])
+def api_diag_selfcheck():
+    """
+    Esegue un self-check operativo completo e registra il risultato nel log eventi.
+    """
+    result = _run_selfcheck()
+    severity = "info" if result["ok"] else ("warning" if result["warnings"] else "error")
+    log_event(
+        area="selfcheck",
+        severity=severity,
+        message="Self-check completato" if result["ok"] else f"Self-check: {len(result['errors'])} errore/i",
+        details={"ok": result["ok"], "error_count": len(result["errors"]), "warning_count": len(result["warnings"])},
+    )
+    return jsonify(result)
+
+
+# ─── export diagnostica ──────────────────────────────────────────────────────
+
+@diag_bp.route("/diag/export", methods=["GET"])
+def api_diag_export():
+    """
+    Esporta un snapshot diagnostico completo in JSON.
+    Include: summary, tools, self-check, eventi recenti.
+    """
+    import json as _json
+
+    # Summary (inline, no HTTP roundtrip)
+    try:
+        import os as _os
+        from core.state import state, media_runtime, led_runtime, alarms_list, jobs_state
+        from config import API_VERSION, BACKUP_DIR, OTA_STATE_FILE
+
+        cpu_temp = _cpu_temperature()
+        ram = _ram_info()
+        disk = _disk_info()
+
+        exp_warnings = []
+        if cpu_temp and cpu_temp > 75:
+            exp_warnings.append(f"Temperatura CPU elevata: {cpu_temp}°C")
+        if ram.get("percent") and ram["percent"] > 90:
+            exp_warnings.append(f"RAM quasi esaurita: {ram['percent']}%")
+        if disk.get("percent") and disk["percent"] > 90:
+            exp_warnings.append(f"Disco quasi pieno: {disk['percent']}%")
+
+        ota_status = "idle"
+        ota_running = False
+        try:
+            if _os.path.exists(OTA_STATE_FILE):
+                with open(OTA_STATE_FILE, "r", encoding="utf-8") as f:
+                    ota_data = _json.load(f)
+                ota_status = ota_data.get("status", "idle")
+                ota_running = ota_data.get("status") == "running"
+        except Exception:
+            pass
+
+        backup_count = 0
+        try:
+            if _os.path.isdir(BACKUP_DIR):
+                backup_count = sum(
+                    1 for n in _os.listdir(BACKUP_DIR)
+                    if _os.path.isdir(_os.path.join(BACKUP_DIR, n))
+                )
+        except Exception:
+            pass
+
+        in_standby = False
+        standby_state_val = "awake"
+        try:
+            from core.hardware import is_in_standby, get_standby_state
+            in_standby = is_in_standby()
+            standby_state_val = get_standby_state()
+        except Exception:
+            pass
+
+        active_jobs = sum(
+            1 for j in jobs_state.values()
+            if j.get("status") not in ("done", "error", "canceled")
+        )
+
+        summary_data = {
+            "api_version": API_VERSION,
+            "cpu_temp_celsius": cpu_temp,
+            "ram_percent": ram.get("percent"),
+            "disk_percent": disk.get("percent"),
+            "uptime_seconds": _uptime_seconds(),
+            "warnings": exp_warnings,
+            "in_standby": in_standby,
+            "standby_state": standby_state_val,
+            "ota_status": ota_status,
+            "ota_running": ota_running,
+            "backup_count": backup_count,
+            "active_jobs": active_jobs,
+            "alarm_count": len(alarms_list),
+        }
+    except Exception as e:
+        log(f"Errore raccolta summary per export: {e}", "warning")
+        summary_data = {"error": "Impossibile raccogliere il riepilogo di sistema"}
+
+    # Tools
+    tools_list = [
+        "mpv", "ffmpeg", "git", "pip", "python3",
+        "nmcli", "rfkill", "amixer", "aplay", "pactl",
+        "reboot", "shutdown", "cpufreq-set", "vcgencmd", "bluetoothctl",
+    ]
+    tools_data = {tool: _check_tool(tool) for tool in tools_list}
+
+    # Self-check (non-destructive, no side effects)
+    selfcheck_data = _run_selfcheck()
+
+    # Recent events
+    events_data = get_events(limit=50)
+
+    return jsonify({
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "summary": summary_data,
+        "tools": tools_data,
+        "selfcheck": selfcheck_data,
+        "recent_events": events_data,
     })

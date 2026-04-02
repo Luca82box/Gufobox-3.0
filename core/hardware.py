@@ -77,6 +77,11 @@ def perform_standby():
     _standby_state = STANDBY_STANDBY
     bus.request_emit("public")
     log("Standby logico attivato. Worker sveglie ancora attivo.", "info")
+    try:
+        from core.event_log import log_event as _lev
+        _lev("standby", "info", "Standby attivato")
+    except Exception:
+        pass
 
 
 def wake_from_standby():
@@ -107,6 +112,11 @@ def wake_from_standby():
     _standby_state = STANDBY_AWAKE
     bus.request_emit("public")
     log("Standby terminato — sistema sveglio.", "info")
+    try:
+        from core.event_log import log_event as _lev
+        _lev("standby", "info", "Wake da standby completato")
+    except Exception:
+        pass
     from hw.battery import play_ai_notification
     play_ai_notification("Uhuu! Sono sveglio e pronto a giocare!")
 
@@ -182,6 +192,11 @@ def _alarm_worker():
 
             target = alarm.get("target", "")
             log(f"Sveglia scattata! id={alarm_id} target={target}", "info")
+            try:
+                from core.event_log import log_event as _lev
+                _lev("standby", "info", f"Sveglia scattata (id={alarm_id})", {"alarm_id": alarm_id, "target": target})
+            except Exception:
+                pass
 
             # Risveglio hardware dedicato per la sveglia
             _wake_for_alarm()

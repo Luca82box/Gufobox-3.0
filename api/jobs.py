@@ -10,6 +10,7 @@ from flask import Blueprint, jsonify
 
 from core.jobs import get_job, list_jobs, cancel_job
 from core.utils import log
+from core.event_log import log_event
 
 jobs_bp = Blueprint("jobs", __name__)
 
@@ -36,4 +37,5 @@ def api_job_cancel(job_id):
     if job is None:
         return jsonify({"error": "Job non trovato"}), 404
     log(f"Cancellazione richiesta via API per job {job_id}", "info")
+    log_event("jobs", "warning", f"Job {job_id} cancellato", {"job_id": job_id})
     return jsonify({"status": "ok", "job": job})

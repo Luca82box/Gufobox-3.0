@@ -75,9 +75,9 @@ def api_wizard_submit():
             return jsonify({
                 "status": "completed_with_error",
                 "wizard": result,
-                "apply_error": msg,
+                "apply_error": "Errore durante l'applicazione della configurazione.",
             })
-        return jsonify({"status": "completed", "wizard": result, "apply_message": msg})
+        return jsonify({"status": "completed", "wizard": result, "apply_message": "Configurazione applicata con successo."})
 
     return jsonify({"status": "ok", "wizard": result})
 

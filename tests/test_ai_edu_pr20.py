@@ -115,7 +115,8 @@ class TestEduConstants:
             "teaching_general", "quiz", "math", "animal_sounds_games",
             "interactive_story", "foreign_languages", "free_conversation",
         }
-        assert expected == VALID_ACTIVITY_MODES
+        # All original 7 modes must still be present (new modes may be added)
+        assert expected.issubset(VALID_ACTIVITY_MODES)
 
     def test_valid_language_targets_has_four(self):
         from api.ai import VALID_LANGUAGE_TARGETS

@@ -90,6 +90,8 @@ def reset_state():
         "system_prompt": "Sei il Gufetto Magico.",
         "openai_api_key": "",
     })
+    # Remove wizard_categories so each test gets fresh defaults
+    ai_settings.pop("wizard_categories", None)
 
     wizard_state.update({
         "active": False,

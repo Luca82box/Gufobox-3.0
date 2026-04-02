@@ -32,12 +32,13 @@
           <input type="text" v-model="form.name" placeholder="Es. Principessa Bella" />
         </div>
         <div class="form-group">
-          <label>Modalit\u00e0</label>
+          <label>Modalità</label>
           <select v-model="form.mode">
-            <option value="media_folder">\ud83c\udfb5 Cartella Media</option>
-            <option value="webradio">\ud83d\udcfb Webradio</option>
-            <option value="ai_chat">\ud83e\udd89 Chat AI (Gufetto)</option>
-            <option value="rss_feed">\ud83d\udcf0 Feed RSS</option>
+            <option value="media_folder">🎵 Cartella Media</option>
+            <option value="webradio">📻 Webradio</option>
+            <option value="ai_chat">🦉 Chat AI (Gufetto)</option>
+            <option value="rss_feed">📰 Feed RSS</option>
+            <option value="edu_ai">🎓 AI Educativa</option>
           </select>
         </div>
         <div class="form-group form-group-inline">
@@ -80,10 +81,54 @@
       </div>
 
       <div v-if="form.mode === 'ai_chat'" class="mode-section">
-        <h4>\ud83e\udd89 Chat AI (Gufetto)</h4>
+        <h4>🦉 Chat AI (Gufetto)</h4>
         <div class="form-group form-group-full">
           <label>Prompt extra (opzionale)</label>
           <textarea v-model="form.ai_prompt" rows="3" placeholder="Es. Sei un pirata gentile..."></textarea>
+        </div>
+      </div>
+
+      <!-- EDU AI section -->
+      <div v-if="form.mode === 'edu_ai'" class="mode-section edu-ai-section">
+        <h4>🎓 AI Educativa</h4>
+        <p class="mode-hint">Quando questa statuina viene avvicinata, attiverà la modalità educativa configurata qui sotto.</p>
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label>Fascia d'Età</label>
+            <select v-model="form.edu_config.age_group">
+              <option value="bambino">🧒 Bambino (3–7 anni)</option>
+              <option value="ragazzo">👦 Ragazzo (8–13 anni)</option>
+              <option value="adulto">👨 Adulto / Genitore</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Modalità Attività</label>
+            <select v-model="form.edu_config.activity_mode">
+              <option value="free_conversation">💬 Conversazione Libera</option>
+              <option value="teaching_general">📚 Insegnamento Generale</option>
+              <option value="interactive_story">📖 Storia Interattiva</option>
+              <option value="animal_sounds_games">🦁 Animali e Versi</option>
+              <option value="quiz">❓ Quiz</option>
+              <option value="math">🧮 Matematica</option>
+              <option value="foreign_languages">🌍 Lingue Straniere</option>
+            </select>
+          </div>
+          <div class="form-group" v-if="form.edu_config.activity_mode === 'foreign_languages'">
+            <label>Lingua da Imparare</label>
+            <select v-model="form.edu_config.language_target">
+              <option value="english">🇬🇧 Inglese</option>
+              <option value="spanish">🇪🇸 Spagnolo</option>
+              <option value="german">🇩🇪 Tedesco</option>
+              <option value="french">🇫🇷 Francese</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Step (1–10): {{ form.edu_config.learning_step }}</label>
+            <input type="range" min="1" max="10" step="1" v-model.number="form.edu_config.learning_step" />
+          </div>
+        </div>
+        <div class="edu-summary">
+          <span class="edu-tag">{{ eduSummary }}</span>
         </div>
       </div>
 
@@ -210,7 +255,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, onBeforeUnmount } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useApi } from '../../composables/useApi'
 import { useAdminFeedback } from '../../composables/useAdminFeedback'
 
@@ -229,13 +274,41 @@ const rssPreviewItems = ref([])
 const rssPreviewError = ref('')
 const rssLoading = ref(false)
 
+const EDU_CONFIG_DEFAULT = () => ({
+  age_group: 'bambino',
+  activity_mode: 'free_conversation',
+  language_target: 'english',
+  learning_step: 1,
+})
+
 const FORM_DEFAULT = () => ({
   rfid_code: '', name: '', enabled: true, mode: 'media_folder',
   image_path: '', folder: '', webradio_url: '', ai_prompt: '',
   rss_url: '', rss_limit: 10, volume: 70, loop: true,
+  edu_config: EDU_CONFIG_DEFAULT(),
   led: { enabled: false, effect_id: 'solid', color: '#ffffff', brightness: 70, speed: 30 },
 })
 const form = reactive(FORM_DEFAULT())
+
+const AGE_LABELS = { bambino: 'Bambino', ragazzo: 'Ragazzo', adulto: 'Adulto' }
+const MODE_LABELS_EDU = {
+  free_conversation: 'Conversazione Libera',
+  teaching_general: 'Insegnamento Generale',
+  interactive_story: 'Storia Interattiva',
+  animal_sounds_games: 'Animali e Versi',
+  quiz: 'Quiz',
+  math: 'Matematica',
+  foreign_languages: 'Lingue Straniere',
+}
+const LANG_LABELS = { english: 'Inglese', spanish: 'Spagnolo', german: 'Tedesco', french: 'Francese' }
+
+const eduSummary = computed(() => {
+  const ec = form.edu_config
+  const parts = [AGE_LABELS[ec.age_group] || ec.age_group, MODE_LABELS_EDU[ec.activity_mode] || ec.activity_mode]
+  if (ec.activity_mode === 'foreign_languages') parts.push(LANG_LABELS[ec.language_target] || ec.language_target)
+  parts.push(`Step ${ec.learning_step}`)
+  return parts.join(' · ')
+})
 
 async function loadProfiles() {
   loading.value = true
@@ -262,10 +335,16 @@ async function loadCurrentRfid() {
 async function saveProfile() {
   if (!form.rfid_code.trim() || !form.name.trim()) return
   isSaving.value = true; saveError.value = ''
-  const payload = { ...form, rfid_code: form.rfid_code.trim().toUpperCase(), led: form.led.enabled ? { ...form.led } : undefined }
+  const payload = {
+    ...form,
+    rfid_code: form.rfid_code.trim().toUpperCase(),
+    led: form.led.enabled ? { ...form.led } : undefined,
+    edu_config: form.mode === 'edu_ai' ? { ...form.edu_config } : undefined,
+  }
   try {
     if (isEditing.value) await guardedCall(() => getApi().put(`/rfid/profile/${payload.rfid_code}`, payload))
     else await guardedCall(() => getApi().post('/rfid/profile', payload))
+    showSuccess(isEditing.value ? 'Profilo aggiornato.' : 'Profilo creato.')
     resetForm(); await loadProfiles()
   } catch (e) { saveError.value = extractApiError(e, 'Errore salvataggio') }
   finally { isSaving.value = false }
@@ -306,7 +385,11 @@ async function previewRss() {
 function editProfile(p) {
   isEditing.value = true
   Object.assign(form, FORM_DEFAULT())
-  Object.assign(form, { ...p, led: p.led ? { ...p.led } : FORM_DEFAULT().led })
+  Object.assign(form, {
+    ...p,
+    led: p.led ? { ...p.led } : FORM_DEFAULT().led,
+    edu_config: p.edu_config ? { ...EDU_CONFIG_DEFAULT(), ...p.edu_config } : EDU_CONFIG_DEFAULT(),
+  })
   rssPreviewItems.value = []; rssPreviewError.value = ''
 }
 
@@ -320,13 +403,19 @@ function waitForScan() { isScanning.value = true; form.rfid_code = '' }
 
 function handleRfidScanned(data) { if (isScanning.value && data?.uid) { form.rfid_code = data.uid; isScanning.value = false } }
 
-function modeIcon(m) { return { media_folder: '\ud83c\udfb5', webradio: '\ud83d\udcfb', ai_chat: '\ud83e\udd89', rss_feed: '\ud83d\udcf0' }[m] || '\ud83c\udff7\ufe0f' }
-function modeLabel(m) { return { media_folder: 'Cartella Media', webradio: 'Webradio', ai_chat: 'AI Chat', rss_feed: 'Feed RSS' }[m] || m }
+function modeIcon(m) { return { media_folder: '🎵', webradio: '📻', ai_chat: '🦉', rss_feed: '📰', edu_ai: '🎓' }[m] || '🏷️' }
+function modeLabel(m) { return { media_folder: 'Cartella Media', webradio: 'Webradio', ai_chat: 'AI Chat', rss_feed: 'Feed RSS', edu_ai: 'AI Educativa' }[m] || m }
 function profileTarget(p) {
   if (p.mode === 'media_folder') return p.folder || ''
   if (p.mode === 'webradio') return p.webradio_url || ''
   if (p.mode === 'ai_chat') return (p.ai_prompt || 'Prompt AI').slice(0, 60)
   if (p.mode === 'rss_feed') return p.rss_url || ''
+  if (p.mode === 'edu_ai' && p.edu_config) {
+    const ec = p.edu_config
+    const parts = [AGE_LABELS[ec.age_group] || ec.age_group, MODE_LABELS_EDU[ec.activity_mode] || ec.activity_mode]
+    if (ec.activity_mode === 'foreign_languages') parts.push(LANG_LABELS[ec.language_target] || ec.language_target)
+    return parts.join(' · ')
+  }
   return ''
 }
 
@@ -437,6 +526,10 @@ onBeforeUnmount(() => { const s = getSocket(); if (s) { s.off('rfid_scanned', ha
 .btn-icon:disabled { opacity: .4; cursor: not-allowed; }
 .btn-trigger { color: #4caf50; }
 .text-red { color: #ff4d4d; }
+.mode-badge.edu_ai { background: #2e7d32; }
+.edu-ai-section .mode-hint { font-size: .85rem; color: #aaa; margin: -4px 0 12px; font-style: italic; }
+.edu-summary { margin-top: 12px; }
+.edu-tag { display: inline-block; background: #2e7d32; color: #fff; font-size: .82rem; padding: 4px 12px; border-radius: 20px; font-weight: bold; }
 .empty-state { text-align: center; padding: 30px; color: #aaa; font-style: italic; }
 .loading-state { text-align: center; padding: 20px; color: #aaa; }
 </style>

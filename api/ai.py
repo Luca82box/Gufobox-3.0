@@ -145,6 +145,58 @@ def _sync_legacy_edu_fields():
     ai_settings["target_lang"] = LANG_TO_CODE.get(language_target, language_target)
 
 
+def apply_rfid_edu_config(edu_config: dict) -> None:
+    """
+    Apply an edu_config dict (from an RFID profile) to the live ai_settings.
+
+    Called by api/rfid.py when a statuette with mode=edu_ai is triggered.
+    Validates each field against the canonical sets and falls back to safe
+    defaults rather than raising, so a partial/invalid config never crashes.
+
+    Args:
+        edu_config: dict with keys age_group, activity_mode, language_target,
+                    learning_step.  Extra keys are silently ignored.
+    """
+    age_group = str(edu_config.get("age_group", "bambino")).strip()
+    if age_group not in VALID_AGE_GROUPS:
+        log_event("ai", "warning", "apply_rfid_edu_config: age_group non valido, uso bambino", {
+            "received": age_group,
+            "valid": sorted(VALID_AGE_GROUPS),
+        })
+        age_group = "bambino"
+
+    activity_mode = str(edu_config.get("activity_mode", "free_conversation")).strip()
+    if activity_mode not in VALID_ACTIVITY_MODES:
+        log_event("ai", "warning", "apply_rfid_edu_config: activity_mode non valido, uso free_conversation", {
+            "received": activity_mode,
+            "valid": sorted(VALID_ACTIVITY_MODES),
+        })
+        activity_mode = "free_conversation"
+
+    language_target = str(edu_config.get("language_target", "english")).strip()
+    if language_target not in VALID_LANGUAGE_TARGETS:
+        log_event("ai", "warning", "apply_rfid_edu_config: language_target non valido, uso english", {
+            "received": language_target,
+            "valid": sorted(VALID_LANGUAGE_TARGETS),
+        })
+        language_target = "english"
+
+    try:
+        learning_step = max(1, int(edu_config.get("learning_step", 1)))
+    except (TypeError, ValueError):
+        learning_step = 1
+
+    ai_settings["age_group"] = age_group
+    ai_settings["activity_mode"] = activity_mode
+    ai_settings["language_target"] = language_target
+    ai_settings["learning_step"] = learning_step
+    _sync_legacy_edu_fields()
+
+    save_json_direct(AI_SETTINGS_FILE, ai_settings)
+    bus.mark_dirty("ai")
+    bus.request_emit("public")
+
+
 # =========================================================
 # Canonical AI status values
 AI_STATUS_IDLE = "idle"
@@ -266,6 +318,10 @@ def api_ai_status():
         "activity_mode_label": ACTIVITY_MODE_LABELS.get(activity_mode, activity_mode),
         "language_target": language_target,
         "learning_step": learning_step,
+        # RFID source (set by edu_ai trigger)
+        "active_rfid": ai_runtime.get("active_rfid"),
+        "active_profile_name": ai_runtime.get("active_profile_name"),
+        "edu_rfid_active": bool(ai_runtime.get("edu_rfid_active", False)),
     })
 
 # =========================================================

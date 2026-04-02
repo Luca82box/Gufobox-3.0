@@ -10,6 +10,8 @@ Endpoints:
   POST   /api/rfid/trigger               — trigger manuale/hardware
 
 Mantiene anche la rotta legacy /rfid/map (in api/media.py) per retrocompatibilità.
+
+PR 21: aggiunto mode=edu_ai per collegare profili RFID a configurazioni AI educative.
 """
 import re
 import time
@@ -20,13 +22,22 @@ from flask import Blueprint, request, jsonify
 from core.state import rfid_profiles, media_runtime, rss_runtime, bus, save_json_direct
 from config import RFID_PROFILES_FILE
 from core.utils import log
+from core.event_log import log_event
 
 rfid_bp = Blueprint("rfid", __name__)
 
 # =========================================================
 # VALIDAZIONE
 # =========================================================
-VALID_MODES = {"media_folder", "webradio", "ai_chat", "rss_feed"}
+VALID_MODES = {"media_folder", "webradio", "ai_chat", "rss_feed", "edu_ai"}
+
+# Educational AI constants (mirrors api/ai.py — kept in sync)
+_VALID_AGE_GROUPS = {"bambino", "ragazzo", "adulto"}
+_VALID_ACTIVITY_MODES = {
+    "teaching_general", "quiz", "math", "animal_sounds_games",
+    "interactive_story", "foreign_languages", "free_conversation",
+}
+_VALID_LANGUAGE_TARGETS = {"english", "spanish", "german", "french"}
 _HEX_COLOR_RE = re.compile(r'^#[0-9a-fA-F]{3,8}$')
 
 
@@ -37,6 +48,65 @@ def _is_valid_http_url(url):
         return parsed.scheme in ("http", "https") and bool(parsed.netloc)
     except Exception:
         return False
+
+
+def _validate_edu_config_block(edu_config, update=False):
+    """
+    Valida il blocco edu_config di un profilo RFID.
+    Ritorna (edu_dict, error_string).
+
+    Campi:
+      age_group       — bambino | ragazzo | adulto
+      activity_mode   — modalità educativa AI
+      language_target — solo per foreign_languages: english|spanish|german|french
+      learning_step   — intero >= 1
+
+    La lista `activities` (futura estensione multi-attività) è accettata se presente
+    ma non validata in profondità: viene salvata così com'è per compatibilità futura.
+    """
+    if edu_config is None:
+        return None, None
+    if not isinstance(edu_config, dict):
+        return None, "Il campo 'edu_config' deve essere un oggetto"
+
+    errors = []
+
+    age_group = str(edu_config.get("age_group", "bambino")).strip()
+    if age_group not in _VALID_AGE_GROUPS:
+        errors.append(f"edu_config.age_group non valido: '{age_group}'. Valori: {sorted(_VALID_AGE_GROUPS)}")
+        age_group = "bambino"
+
+    activity_mode = str(edu_config.get("activity_mode", "free_conversation")).strip()
+    if activity_mode not in _VALID_ACTIVITY_MODES:
+        errors.append(f"edu_config.activity_mode non valido: '{activity_mode}'. Valori: {sorted(_VALID_ACTIVITY_MODES)}")
+        activity_mode = "free_conversation"
+
+    language_target = str(edu_config.get("language_target", "english")).strip()
+    if activity_mode == "foreign_languages" and language_target not in _VALID_LANGUAGE_TARGETS:
+        errors.append(f"edu_config.language_target non valido: '{language_target}'. Valori: {sorted(_VALID_LANGUAGE_TARGETS)}")
+        language_target = "english"
+
+    learning_step = 1
+    try:
+        learning_step = max(1, int(edu_config.get("learning_step", 1)))
+    except (TypeError, ValueError):
+        errors.append("edu_config.learning_step deve essere un intero >= 1")
+
+    if errors:
+        return None, "; ".join(errors)
+
+    result = {
+        "age_group": age_group,
+        "activity_mode": activity_mode,
+        "language_target": language_target,
+        "learning_step": learning_step,
+    }
+
+    # Preserve 'activities' list if provided (future multi-activity support)
+    if isinstance(edu_config.get("activities"), list):
+        result["activities"] = edu_config["activities"]
+
+    return result, None
 
 
 def _validate_led_block(led):
@@ -153,6 +223,14 @@ def validate_rfid_profile(data, update=False):
     if led_error:
         errors.append(led_error)
 
+    # edu_config (richiesto se mode == edu_ai, opzionale altrimenti)
+    edu_config_raw = data.get("edu_config")
+    if mode == "edu_ai" and not update and edu_config_raw is None:
+        edu_config_raw = {}
+    edu_config, edu_error = _validate_edu_config_block(edu_config_raw)
+    if edu_error:
+        errors.append(edu_error)
+
     if errors:
         return None, "; ".join(errors)
 
@@ -170,6 +248,7 @@ def validate_rfid_profile(data, update=False):
         "volume": volume,
         "loop": loop,
         "led": led,
+        "edu_config": edu_config,
         "updated_at": int(time.time()),
     }
     return profile, None
@@ -278,7 +357,7 @@ def api_rfid_current():
 def api_rfid_trigger_profile():
     """
     Trigger avanzato: usa il modello profilo completo.
-    Supporta mode: media_folder, webradio, ai_chat, rss_feed.
+    Supporta mode: media_folder, webradio, ai_chat, rss_feed, edu_ai.
     """
     data = request.get_json(silent=True) or {}
     rfid_code = str(data.get("rfid_code", "")).strip().upper()
@@ -315,6 +394,8 @@ def api_rfid_trigger_profile():
         return _trigger_ai_chat(rfid_code, profile)
     elif mode == "rss_feed":
         return _trigger_rss_feed(rfid_code, profile)
+    elif mode == "edu_ai":
+        return _trigger_edu_ai(rfid_code, profile)
     else:
         return jsonify({"error": f"mode non supportato: {mode}"}), 400
 
@@ -456,6 +537,90 @@ def _trigger_rss_feed(rfid_code, profile):
 
     bus.emit_notification(f"📰 {profile.get('name', rfid_code)} — {len(items)} articoli", "success")
     return jsonify({"status": "ok", "mode": "rss_feed", "items": items})
+
+
+def _trigger_edu_ai(rfid_code, profile):
+    """
+    mode=edu_ai: attiva la configurazione AI educativa dal profilo RFID.
+
+    Applica age_group, activity_mode, language_target, learning_step a ai_settings
+    tramite api.ai.apply_rfid_edu_config(), resetta la cronologia chat per evitare
+    incoerenze di sessione, e aggiorna snapshot/runtime.
+    """
+    from core.state import ai_runtime
+
+    edu_config = profile.get("edu_config")
+    if not edu_config:
+        log(f"Profilo RFID {rfid_code} edu_ai: edu_config mancante", "warning")
+        log_event("rfid", "warning", "Profilo RFID edu_ai senza edu_config", {
+            "rfid_code": rfid_code,
+            "profile_name": profile.get("name"),
+        })
+        bus.emit_notification("Configurazione educativa mancante nel profilo.", "warning")
+        return jsonify({"error": "edu_config mancante nel profilo edu_ai"}), 400
+
+    # Apply to ai_settings via api.ai helper
+    try:
+        from api.ai import apply_rfid_edu_config
+        apply_rfid_edu_config(edu_config)
+    except Exception as e:
+        log(f"Errore applicazione config educativa RFID {rfid_code}: {e}", "warning")
+        log_event("rfid", "error", "Errore attivazione AI educativa via RFID", {
+            "rfid_code": rfid_code,
+            "error": str(e),
+        })
+        bus.emit_notification("Errore nell'attivazione AI educativa.", "error")
+        return jsonify({"error": "Errore attivazione AI educativa"}), 500
+
+    # Track in ai_runtime
+    ai_runtime["active_rfid"] = rfid_code
+    ai_runtime["active_profile_name"] = profile.get("name", "")
+    ai_runtime["edu_rfid_active"] = True
+    # Reset chat history to avoid session mismatches
+    ai_runtime["history"] = []
+    bus.mark_dirty("ai")
+    bus.request_emit("public")
+
+    # Update media_runtime snapshot
+    media_runtime["current_rfid"] = rfid_code
+    media_runtime["current_profile_name"] = profile.get("name")
+    media_runtime["current_mode"] = "edu_ai"
+    bus.mark_dirty("media")
+    bus.request_emit("public")
+
+    activity_mode = edu_config.get("activity_mode", "free_conversation")
+    age_group = edu_config.get("age_group", "bambino")
+    language_target = edu_config.get("language_target", "english")
+    learning_step = edu_config.get("learning_step", 1)
+
+    log_event("rfid", "info", "AI educativa attivata via RFID", {
+        "rfid_code": rfid_code,
+        "profile_name": profile.get("name"),
+        "age_group": age_group,
+        "activity_mode": activity_mode,
+        "language_target": language_target,
+        "learning_step": learning_step,
+    })
+
+    log(
+        f"AI educativa attivata: RFID={rfid_code} profilo={profile.get('name')} "
+        f"modalità={activity_mode} fascia={age_group}",
+        "info",
+    )
+    bus.emit_notification(f"🎓 {profile.get('name', rfid_code)}", "success")
+
+    return jsonify({
+        "status": "ok",
+        "mode": "edu_ai",
+        "profile_name": profile.get("name"),
+        "rfid_code": rfid_code,
+        "edu_config": {
+            "age_group": age_group,
+            "activity_mode": activity_mode,
+            "language_target": language_target,
+            "learning_step": learning_step,
+        },
+    })
 
 
 # =========================================================

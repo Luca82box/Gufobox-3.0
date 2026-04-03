@@ -150,7 +150,10 @@ if __name__ == "__main__":
         def _play_welcome():
             try:
                 from hw.battery import play_ai_notification
-                play_ai_notification("Uhuu! Ciao, sono il Gufetto! Sono pronto a giocare con te!")
+                play_ai_notification(
+                    "Uhuuu! Ciao amichetto! Il tuo gufetto si è svegliato "
+                    "ed è pronto a giocare! Che bello vederti!"
+                )
             except Exception as e:
                 log(f"Notifica benvenuto non disponibile: {e}", "warning")
         eventlet.spawn(_play_welcome)
@@ -165,6 +168,15 @@ if __name__ == "__main__":
         log("Spegnimento manuale rilevato. Chiusura servizi...", "warning")
         request_shutdown()
     finally:
+        # Notifica audio di spegnimento (best-effort)
+        try:
+            from hw.battery import play_ai_notification
+            play_ai_notification(
+                "Zzz... Il gufetto va a fare la nanna! A presto amichetto! Sogni d'oro!"
+            )
+            eventlet.sleep(3)  # Piccola attesa per far finire la notifica
+        except Exception:
+            pass
         # Segnala a tutti i worker di terminare e dai loro un momento per farlo
         request_shutdown()
         log("Attendo la terminazione dei worker...", "info")

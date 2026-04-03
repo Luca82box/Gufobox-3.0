@@ -110,10 +110,19 @@ def _battery_watchdog():
             bus.mark_dirty("state")
             bus.request_emit("public")
 
+            # Salva la lettura nel database per il grafico storico batteria
+            try:
+                from core.database import log_battery_reading
+                log_battery_reading(percent, voltage if voltage is not None else 0.0, charging)
+            except Exception as e:
+                log(f"Errore salvataggio storico batteria: {e}", "warning")
+
             # Notifica quando inizia la ricarica (con cooldown)
             if charging and not was_charging and not charging_notif_played:
-                play_ai_notification("Uhuu! Mi sto ricaricando, grazie!")
-                bus.emit_notification("Batteria in ricarica 🔌", "info")
+                play_ai_notification(
+                    "Mmmm che buono! Il gufetto sta mangiando energia! Grazie! Sono felice felice!"
+                )
+                bus.emit_notification("Batteria in ricarica ⚡🍪", "info")
                 charging_notif_played = True
             elif not charging:
                 charging_notif_played = False
@@ -123,17 +132,27 @@ def _battery_watchdog():
             # Notifiche batteria quasi scarica e scarica
             if not charging:
                 if 10 < percent <= 20 and not alert_20_played:
-                    play_ai_notification("Uhuu! La mia pancina brontola, la batteria è al 20 percento! Attaccami alla corrente.")
-                    bus.emit_notification("Batteria al 20%", "warning")
+                    play_ai_notification(
+                        "Uhu uhu... il gufetto ha un po' di sonnolino... "
+                        "caricami presto amichetto! Ho bisogno di energiaaaa!"
+                    )
+                    bus.emit_notification("Uhu uhu... batteria al 20% 😴🔋", "warning")
                     alert_20_played = True
-                    
+
                 elif percent <= 10 and not alert_10_played:
-                    play_ai_notification("Uhuu! Sto per addormentarmi... batteria quasi finita! Mettimi in carica per favore.")
-                    bus.emit_notification("Batteria CRITICA!", "error")
+                    play_ai_notification(
+                        "Oh no oh no... il gufetto si sta addormentando... "
+                        "ho bisogno di energia adesso! Mettimi in carica per favore!"
+                    )
+                    bus.emit_notification("Oh no! Batteria CRITICA! 💤🪫", "error")
                     alert_10_played = True
-                    
+
                     # Sotto il 5% forza lo standby per non rovinare le celle
                     if percent <= 5:
+                        play_ai_notification(
+                            "Zzz... il gufetto si addormenta adesso... a presto amichetto! "
+                            "Non dimenticare di caricarmi!"
+                        )
                         from core.hardware import perform_standby
                         perform_standby()
 

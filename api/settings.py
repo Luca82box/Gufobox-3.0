@@ -1,9 +1,14 @@
 import uuid
-from flask import Blueprint, request, jsonify
+import csv
+import io
+from flask import Blueprint, request, jsonify, Response
 from core.state import state, alarms_list, media_runtime, bus, save_json_direct
 from config import ALARMS_FILE, STATE_FILE
 from core.utils import log, run_cmd
-from core.database import get_daily_stats
+from core.database import (
+    get_daily_stats, get_top_figurines, get_hourly_stats,
+    get_battery_history, get_all_stats_for_export,
+)
 
 settings_bp = Blueprint('settings', __name__)
 
@@ -81,10 +86,49 @@ def save_parental_settings():
     return jsonify({"status": "ok"})
 
 # =========================================================
-# STATISTICHE (#11)
+# STATISTICHE (#11 + Analytics)
 # =========================================================
 @settings_bp.route("/stats/daily", methods=["GET"])
 def api_daily_stats():
-    """Recupera i dati dal DB SQLite per il grafico Vue"""
+    """Recupera i dati dal DB SQLite per il grafico Vue (ultimi 7 giorni)"""
     return jsonify(get_daily_stats())
+
+@settings_bp.route("/stats/top-figurines", methods=["GET"])
+def api_top_figurines():
+    """Classifica le statuine più usate per tempo di ascolto 🏆"""
+    n = request.args.get("n", 5, type=int)
+    n = max(1, min(20, n))  # Limite a 20 statuine: sufficiente per l'UI e le performance DB
+    return jsonify(get_top_figurines(n))
+
+@settings_bp.route("/stats/hourly", methods=["GET"])
+def api_hourly_stats():
+    """Distribuzione degli ascolti per fascia oraria (0-23) 🕐"""
+    return jsonify(get_hourly_stats())
+
+@settings_bp.route("/stats/battery-history", methods=["GET"])
+def api_battery_history():
+    """Storico percentuale batteria nel tempo 🔋"""
+    hours = request.args.get("hours", 24, type=int)
+    hours = max(1, min(48, hours))
+    return jsonify(get_battery_history(hours))
+
+@settings_bp.route("/stats/export", methods=["GET"])
+def api_stats_export():
+    """Esporta tutte le statistiche di ascolto in CSV o JSON 📤"""
+    fmt = request.args.get("format", "json").lower()
+    data = get_all_stats_for_export()
+
+    if fmt == "csv":
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=["date", "hour", "rfid_uid", "duration_seconds"])
+        writer.writeheader()
+        writer.writerows(data)
+        csv_content = output.getvalue()
+        return Response(
+            csv_content,
+            mimetype="text/csv",
+            headers={"Content-Disposition": "attachment; filename=gufobox_stats.csv"},
+        )
+
+    return jsonify(data)
 

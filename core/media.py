@@ -1,4 +1,5 @@
 import os
+import time
 import subprocess
 import threading
 import socket
@@ -20,6 +21,7 @@ MPV_IPC_SOCKET = "/tmp/gufobox-mpv.sock"
 _current_rfid_uid = None
 _current_target = None
 _current_playlist_index = 0
+_session_start_ts = None  # Timestamp di inizio sessione per le statistiche
 
 
 # =========================================================
@@ -113,7 +115,7 @@ def _save_resume_if_needed():
 def start_player(target, mode="audio_only", rfid_uid=None, playlist_index=0,
                  profile_name=None, profile_mode=None, volume=None):
     """Ferma eventuali riproduzioni in corso e avvia il nuovo file"""
-    global player_proc, _current_rfid_uid, _current_target, _current_playlist_index
+    global player_proc, _current_rfid_uid, _current_target, _current_playlist_index, _session_start_ts
 
     # Ferma sempre prima di far partire qualcosa di nuovo
     stop_player()
@@ -137,6 +139,11 @@ def start_player(target, mode="audio_only", rfid_uid=None, playlist_index=0,
     _current_rfid_uid = rfid_uid
     _current_target = target
     _current_playlist_index = playlist_index
+    # Avvia tracciamento durata sessione per le statistiche
+    if rfid_uid:
+        _session_start_ts = time.time()
+    else:
+        _session_start_ts = None
 
     # Applica volume se specificato
     if volume is not None:
@@ -192,10 +199,15 @@ def _reset_media_runtime():
 
 def stop_player():
     """Ferma il player in modo sicuro e pulito"""
-    global player_proc, _current_rfid_uid, _current_target, _current_playlist_index
+    global player_proc, _current_rfid_uid, _current_target, _current_playlist_index, _session_start_ts
 
     # Salva la posizione prima di fermarsi (Smart Resume)
     _save_resume_if_needed()
+
+    # Registra la durata della sessione nelle statistiche
+    uid_to_log = _current_rfid_uid
+    ts_to_log = _session_start_ts
+    _session_start_ts = None
 
     with player_lock:
         proc = player_proc
@@ -205,6 +217,14 @@ def stop_player():
     _current_rfid_uid = None
     _current_target = None
     _current_playlist_index = 0
+
+    if uid_to_log and ts_to_log is not None:
+        try:
+            duration = int(time.time() - ts_to_log)
+            from core.database import log_listening_session
+            log_listening_session(uid_to_log, duration)
+        except Exception as e:
+            log(f"Impossibile registrare sessione di ascolto: {e}", "warning")
 
     if proc:
         try:
@@ -224,7 +244,7 @@ def _player_watchdog_loop():
     Attende silenziosamente che il processo MPV termini da solo (es. fine canzone).
     """
     from core.utils import is_shutdown_requested
-    global player_proc, _current_rfid_uid, _current_target
+    global player_proc, _current_rfid_uid, _current_target, _current_playlist_index, _session_start_ts
     while not is_shutdown_requested():
         eventlet.sleep(1) # Pausa leggera per respirare
 
@@ -239,6 +259,18 @@ def _player_watchdog_loop():
                 # è finita naturalmente (e non che l'utente ha premuto STOP).
                 if player_proc == proc:
                     log("✅ Riproduzione terminata naturalmente.", "info")
+
+                    # Registra la durata della sessione nelle statistiche (fine naturale)
+                    uid_ended = _current_rfid_uid
+                    ts_ended = _session_start_ts
+                    _session_start_ts = None
+                    if uid_ended and ts_ended is not None:
+                        try:
+                            duration = int(time.time() - ts_ended)
+                            from core.database import log_listening_session
+                            log_listening_session(uid_ended, duration)
+                        except Exception as e:
+                            log(f"Impossibile registrare sessione di ascolto (fine naturale): {e}", "warning")
 
                     # Quando il file termina naturalmente azzeriamo il resume per quell'uid,
                     # così la prossima riproduzione riparte dall'inizio invece che dalla fine.

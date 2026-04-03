@@ -55,9 +55,18 @@ def init_db():
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     date TEXT,
                     rfid_uid TEXT,
-                    duration_seconds INTEGER
+                    duration_seconds INTEGER,
+                    hour INTEGER
                 )
             ''')
+            # Migrazione per database esistenti (prima dell'aggiunta della colonna hour):
+            # fresh installs già avranno la colonna dal CREATE TABLE sopra,
+            # quindi il "duplicate column" viene ignorato (identico pattern di playlist_index)
+            try:
+                conn.execute("ALTER TABLE listening_stats ADD COLUMN hour INTEGER")
+            except sqlite3.OperationalError as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
             # Tabella per il Resume Intelligente degli Audiolibri (#8) — versione avanzata
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS smart_resume (
@@ -74,7 +83,17 @@ def init_db():
             except sqlite3.OperationalError as e:
                 if "duplicate column" not in str(e).lower():
                     raise
-        log("Database SQLite (Statistiche e Resume) inizializzato.", "info")
+            # Tabella storico batteria per il grafico nel tempo
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS battery_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts INTEGER,
+                    percent REAL,
+                    voltage REAL,
+                    charging INTEGER
+                )
+            ''')
+        log("Database SQLite (Statistiche, Resume e Batteria) inizializzato.", "info")
     except Exception as e:
         log(f"Errore inizializzazione DB: {e}", "error")
 
@@ -82,13 +101,15 @@ def init_db():
 def log_listening_session(rfid_uid, duration_seconds):
     """Salva una sessione di ascolto conclusa"""
     if duration_seconds < 10: return # Ignora ascolti troppo brevi
-    
-    today = datetime.now().strftime("%Y-%m-%d")
+
+    now = datetime.now()
+    today = now.strftime("%Y-%m-%d")
+    hour = now.hour
     try:
         with _get_conn() as conn:
             conn.execute(
-                "INSERT INTO listening_stats (date, rfid_uid, duration_seconds) VALUES (?, ?, ?)",
-                (today, rfid_uid, duration_seconds)
+                "INSERT INTO listening_stats (date, rfid_uid, duration_seconds, hour) VALUES (?, ?, ?, ?)",
+                (today, rfid_uid, duration_seconds, hour)
             )
     except Exception as e:
         log(f"Errore salvataggio stat: {e}", "warning")
@@ -106,6 +127,116 @@ def get_daily_stats():
             return [{"date": row["date"], "minutes": round(row["total_sec"]/60)} for row in cursor]
     except Exception as e:
         log(f"Errore nel recupero statistiche settimanali: {e}", "warning")
+        return []
+
+def get_top_figurines(n=5):
+    """Recupera le statuine più usate per tempo di ascolto (top N)"""
+    try:
+        with _get_conn() as conn:
+            cursor = conn.execute('''
+                SELECT rfid_uid, SUM(duration_seconds) as total_sec, COUNT(*) as sessions
+                FROM listening_stats
+                WHERE rfid_uid IS NOT NULL AND rfid_uid != ''
+                GROUP BY rfid_uid
+                ORDER BY total_sec DESC
+                LIMIT ?
+            ''', (n,))
+            return [
+                {
+                    "rfid_uid": row["rfid_uid"],
+                    "minutes": round(row["total_sec"] / 60),
+                    "sessions": row["sessions"],
+                }
+                for row in cursor
+            ]
+    except Exception as e:
+        log(f"Errore nel recupero statuine top: {e}", "warning")
+        return []
+
+def get_hourly_stats():
+    """Recupera i minuti totali ascoltati per fascia oraria (0-23)"""
+    try:
+        with _get_conn() as conn:
+            cursor = conn.execute('''
+                SELECT hour, SUM(duration_seconds) as total_sec
+                FROM listening_stats
+                WHERE hour IS NOT NULL
+                GROUP BY hour
+                ORDER BY hour ASC
+            ''')
+            # Inizializza tutte le 24 ore a 0
+            result = {h: 0 for h in range(24)}
+            for row in cursor:
+                result[row["hour"]] = round(row["total_sec"] / 60)
+            return [{"hour": h, "minutes": result[h]} for h in range(24)]
+    except Exception as e:
+        log(f"Errore nel recupero statistiche orarie: {e}", "warning")
+        return [{"hour": h, "minutes": 0} for h in range(24)]
+
+# --- FUNZIONI STORICO BATTERIA ---
+def log_battery_reading(percent, voltage, charging):
+    """Salva una lettura della batteria nel database (chiamata ogni minuto dal watchdog)"""
+    try:
+        with _get_conn() as conn:
+            conn.execute(
+                "INSERT INTO battery_history (ts, percent, voltage, charging) VALUES (?, ?, ?, ?)",
+                (int(time.time()), percent, voltage, 1 if charging else 0)
+            )
+            # Mantieni solo le ultime 48 ore di dati (ogni minuto = max 2880 righe)
+            cutoff = int(time.time()) - 48 * 3600
+            conn.execute("DELETE FROM battery_history WHERE ts < ?", (cutoff,))
+    except Exception as e:
+        log(f"Errore salvataggio storico batteria: {e}", "warning")
+
+def get_battery_history(hours=24):
+    """Recupera lo storico batteria delle ultime N ore (campionato ogni ~5 minuti)"""
+    try:
+        cutoff = int(time.time()) - hours * 3600
+        with _get_conn() as conn:
+            cursor = conn.execute('''
+                SELECT ts, percent, voltage, charging
+                FROM battery_history
+                WHERE ts >= ?
+                ORDER BY ts ASC
+            ''', (cutoff,))
+            rows = cursor.fetchall()
+            # Campionamento: restituisce al massimo 300 punti (circa ogni 5 min su 24h)
+            if len(rows) > 300:
+                step = len(rows) // 300
+                rows = rows[::step]
+            return [
+                {
+                    "ts": row["ts"],
+                    "percent": row["percent"],
+                    "voltage": row["voltage"],
+                    "charging": bool(row["charging"]),
+                }
+                for row in rows
+            ]
+    except Exception as e:
+        log(f"Errore nel recupero storico batteria: {e}", "warning")
+        return []
+
+def get_all_stats_for_export():
+    """Recupera tutte le statistiche di ascolto per l'export (CSV/JSON)"""
+    try:
+        with _get_conn() as conn:
+            cursor = conn.execute('''
+                SELECT date, hour, rfid_uid, duration_seconds
+                FROM listening_stats
+                ORDER BY date DESC, hour ASC
+            ''')
+            return [
+                {
+                    "date": row["date"],
+                    "hour": row["hour"],
+                    "rfid_uid": row["rfid_uid"],
+                    "duration_seconds": row["duration_seconds"],
+                }
+                for row in cursor
+            ]
+    except Exception as e:
+        log(f"Errore nell'export statistiche: {e}", "warning")
         return []
 
 # --- FUNZIONI SMART RESUME (#8) — avanzato ---

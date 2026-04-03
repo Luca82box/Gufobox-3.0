@@ -21,6 +21,7 @@ Endpoints:
 import os
 import shutil
 import mimetypes
+import time as _time
 import zipfile
 import threading
 from flask import Blueprint, request, jsonify, send_file
@@ -597,6 +598,27 @@ def api_files_details():
 
 _upload_sessions: dict = {}
 _upload_lock = threading.Lock()
+_UPLOAD_SESSION_MAX_AGE_SEC = 3600  # 1 ora — sessioni abbandonate
+
+
+def _cleanup_stale_upload_sessions():
+    """Rimuove sessioni di upload abbandonate (più vecchie di _UPLOAD_SESSION_MAX_AGE_SEC)."""
+    now = _time.time()
+    with _upload_lock:
+        stale = [
+            sid for sid, sess in _upload_sessions.items()
+            if now - sess.get("created_ts", now) > _UPLOAD_SESSION_MAX_AGE_SEC
+        ]
+        for sid in stale:
+            sess = _upload_sessions.pop(sid)
+            try:
+                tmp = sess.get("tmp_path", "")
+                if tmp and os.path.exists(tmp):
+                    os.remove(tmp)
+            except Exception:
+                pass
+    if stale:
+        log(f"Upload sessions cleanup: rimosse {len(stale)} sessioni abbandonate", "info")
 
 
 @files_bp.route("/files/upload/init", methods=["POST"])
@@ -630,7 +652,14 @@ def api_files_upload_init():
             "total_size": int(total_size),
             "received": 0,
             "tmp_path": tmp_path,
+            "created_ts": _time.time(),
         }
+    # Cleanup delle sessioni abbandonate (best-effort, non blocca la risposta)
+    try:
+        import eventlet as _ev
+        _ev.spawn(_cleanup_stale_upload_sessions)
+    except Exception:
+        pass
 
     open(tmp_path, "wb").close()
 
@@ -696,7 +725,6 @@ def api_files_upload_finalize():
     try:
         if os.path.exists(dest_path):
             base, ext = os.path.splitext(session["filename"])
-            import time as _time
             dest_path = os.path.join(session["destination"],
                                      f"{base}_{int(_time.time())}{ext}")
 

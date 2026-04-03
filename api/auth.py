@@ -176,6 +176,46 @@ def api_auth_logout():
     return jsonify({"status": "ok"})
 
 
+@auth_bp.route("/auth/pin/change", methods=["POST"])
+def api_auth_pin_change():
+    """
+    Cambia il PIN admin.
+    Richiede autenticazione Bearer token o sessione attiva.
+    Payload: {"current_pin": "1234", "new_pin": "5678"}
+    """
+    # Verifica autenticazione
+    token_ok = False
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token_ok = _token_valid(auth_header[7:].strip())
+    if not (_is_session_authenticated() or token_ok):
+        return jsonify({"error": "Autenticazione richiesta"}), 401
+
+    data = request.get_json(silent=True) or {}
+    current_pin = str(data.get("current_pin", "")).strip()
+    new_pin = str(data.get("new_pin", "")).strip()
+
+    if not current_pin or not new_pin:
+        return jsonify({"error": "current_pin e new_pin richiesti"}), 400
+
+    auth = _auth_state()
+    expected_hash = auth.get("pin_hash") or _hash_pin(_DEFAULT_PIN)
+    if not hmac.compare_digest(_hash_pin(current_pin), expected_hash):
+        return jsonify({"error": "PIN attuale non corretto"}), 401
+
+    if not new_pin.isdigit() or len(new_pin) < 4 or len(new_pin) > 8:
+        return jsonify({"error": "Il nuovo PIN deve essere numerico, da 4 a 8 cifre"}), 400
+
+    auth["pin_hash"] = _hash_pin(new_pin)
+    auth["admin_token"] = None  # Invalida tutti i token esistenti
+    bus.mark_dirty("state")
+    save_json_direct(STATE_FILE, state)
+
+    log("PIN admin modificato", "info")
+    log_event("auth", "info", "PIN admin modificato con successo")
+    return jsonify({"status": "ok", "message": "PIN cambiato. Effettua nuovamente il login."})
+
+
 # ─── helper riusabile ────────────────────────────────────────────────────────
 
 def require_admin(f):

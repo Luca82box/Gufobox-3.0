@@ -1,6 +1,9 @@
 <template>
   <div id="app" class="gufobox-app">
     
+    <!-- Sfondo animato stelle/comete -->
+    <canvas ref="bgCanvas" class="bg-canvas" aria-hidden="true"></canvas>
+
     <TopBar @go-home="showAdmin = false" />
 
     <div v-if="!apiReady && !offline" class="global-loading">
@@ -22,7 +25,7 @@
 </template>
 
 <script setup>
-import { onMounted, onBeforeUnmount } from 'vue'
+import { onMounted, onBeforeUnmount, ref } from 'vue'
 
 // Importiamo i Componenti Visivi
 import TopBar from './components/TopBar.vue'
@@ -36,30 +39,122 @@ import { useAuth } from './composables/useAuth'
 import { useAi } from './composables/useAi'
 import { useMedia } from './composables/useMedia'
 
-const { selectApiBase, connectSocket, disconnectSocket, apiReady, offline } = useApi()
+const { selectApiBase, connectSocket, disconnectSocket, apiReady, offline, batteryPercent } = useApi()
 const { restoreSession, showAdmin, adminUnlocked, logoutAdmin } = useAuth()
 const { updateAiRuntime } = useAi()
 const { loadMediaStatus } = useMedia()
 
-async function onReconnect() {
-  // Ricarica stato media dopo ogni reconnect
-  loadMediaStatus()
+// ─── Canvas sfondo stelle/comete ────────────────────────────────────────────
+const bgCanvas = ref(null)
+let _bgAnimId = null
 
-  // Se il pannello admin era aperto, ri-verifica la sessione.
-  // Se la sessione non è più valida (token scaduto / revocato dal server),
-  // restoreSession() imposta adminUnlocked=false e chiude il pannello automaticamente.
+function initStarBackground(canvas) {
+  const ctx = canvas.getContext('2d')
+  let W = window.innerWidth
+  let H = window.innerHeight
+  canvas.width = W
+  canvas.height = H
+
+  const NUM_STARS = 120
+  const NUM_COMETS = 3
+
+  const stars = Array.from({ length: NUM_STARS }, () => ({
+    x: Math.random() * W,
+    y: Math.random() * H,
+    r: Math.random() * 1.5 + 0.3,
+    alpha: Math.random(),
+    dAlpha: (Math.random() * 0.008 + 0.002) * (Math.random() < 0.5 ? 1 : -1),
+  }))
+
+  const comets = Array.from({ length: NUM_COMETS }, () => newComet(W, H))
+
+  function newComet(w, h) {
+    return {
+      x: Math.random() * w,
+      y: Math.random() * h * 0.5,
+      len: Math.random() * 120 + 60,
+      speed: Math.random() * 4 + 2,
+      alpha: Math.random() * 0.6 + 0.3,
+      angle: Math.PI / 4 + (Math.random() - 0.5) * 0.3,
+      life: 0,
+      maxLife: Math.random() * 80 + 40,
+    }
+  }
+
+  function resize() {
+    W = window.innerWidth
+    H = window.innerHeight
+    canvas.width = W
+    canvas.height = H
+  }
+  window.addEventListener('resize', resize)
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H)
+
+    // Stelle
+    for (const s of stars) {
+      s.alpha += s.dAlpha
+      if (s.alpha <= 0 || s.alpha >= 1) s.dAlpha *= -1
+      s.alpha = Math.max(0.05, Math.min(1, s.alpha))
+      ctx.beginPath()
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2)
+      ctx.fillStyle = `rgba(255,255,255,${s.alpha})`
+      ctx.fill()
+    }
+
+    // Comete
+    for (let i = 0; i < comets.length; i++) {
+      const c = comets[i]
+      c.life++
+      const progress = c.life / c.maxLife
+      const cx = c.x + Math.cos(c.angle) * c.speed * c.life
+      const cy = c.y + Math.sin(c.angle) * c.speed * c.life
+      const tx = cx - Math.cos(c.angle) * c.len * (1 - progress)
+      const ty = cy - Math.sin(c.angle) * c.len * (1 - progress)
+
+      const grad = ctx.createLinearGradient(tx, ty, cx, cy)
+      grad.addColorStop(0, `rgba(255,255,255,0)`)
+      grad.addColorStop(1, `rgba(255,255,255,${c.alpha * (1 - progress)})`)
+      ctx.beginPath()
+      ctx.moveTo(tx, ty)
+      ctx.lineTo(cx, cy)
+      ctx.strokeStyle = grad
+      ctx.lineWidth = 1.5
+      ctx.stroke()
+
+      if (c.life >= c.maxLife) comets[i] = newComet(W, H)
+    }
+
+    _bgAnimId = requestAnimationFrame(draw)
+  }
+  draw()
+  return () => {
+    window.removeEventListener('resize', resize)
+    cancelAnimationFrame(_bgAnimId)
+  }
+}
+
+// ─── Socket / lifecycle ──────────────────────────────────────────────────────
+
+async function onReconnect() {
+  loadMediaStatus()
   if (adminUnlocked.value || showAdmin.value) {
-    // restoreSession() returns true if the session is still authenticated,
-    // false if the token/session has expired or been revoked on the server.
     const stillValid = await restoreSession()
     if (!stillValid && showAdmin.value) {
-      // La sessione non è più valida: chiudi il pannello e forza logout locale
       await logoutAdmin()
     }
   }
 }
 
+let _bgCleanup = null
+
 onMounted(async () => {
+  // Avvia sfondo animato
+  if (bgCanvas.value) {
+    _bgCleanup = initStarBackground(bgCanvas.value)
+  }
+
   // 1. Cerca l'IP del GufoBox sulla rete
   const found = await selectApiBase()
 
@@ -74,23 +169,22 @@ onMounted(async () => {
         if (data?.ai_runtime) {
           updateAiRuntime(data.ai_runtime)
         }
+        // Aggiorna percentuale batteria (clamped 0-100)
+        const batt = data?.state?.battery
+        if (batt && batt.percent != null) {
+          batteryPercent.value = Math.max(0, Math.min(100, Math.round(batt.percent)))
+        }
       },
-      onAdminSnapshot: (_data) => {
-        // Admin snapshot received — components polling their own endpoints
-        // will re-fetch via their own timers; no global store needed here
-      },
-      onJobsUpdate: (_data) => {
-        // Jobs update — individual job panels handle their own refresh
-      },
-      onOtaUpdate: (_data) => {
-        // OTA update — AdminSystem polls OTA status independently
-      }
+      onAdminSnapshot: (_data) => {},
+      onJobsUpdate: (_data) => {},
+      onOtaUpdate: (_data) => {}
     })
   }
 })
 
 onBeforeUnmount(() => {
   disconnectSocket()
+  if (_bgCleanup) _bgCleanup()
 })
 </script>
 
@@ -128,12 +222,30 @@ body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  position: relative;
+}
+
+.bg-canvas {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 0;
 }
 
 .main-content {
   flex: 1;
   position: relative;
+  z-index: 1;
   overflow-x: hidden;
+}
+
+/* TopBar sopra il canvas */
+header {
+  position: relative;
+  z-index: 2;
 }
 
 .global-loading {
@@ -144,6 +256,8 @@ body {
   height: calc(100vh - 74px);
   font-size: 1.2rem;
   color: var(--accent);
+  position: relative;
+  z-index: 1;
 }
 
 .spinner {
@@ -163,4 +277,3 @@ body {
 ::-webkit-scrollbar-thumb { background: #3a3a48; border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: #555; }
 </style>
-

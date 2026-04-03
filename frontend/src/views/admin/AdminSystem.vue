@@ -3,7 +3,7 @@
 
     <div class="header-section">
       <h2>Sistema ⚙️</h2>
-      <p>Gestisci aggiornamenti, backup, rollback e alimentazione.</p>
+      <p>Gestisci aggiornamenti, backup, rollback, alimentazione e sicurezza.</p>
     </div>
 
     <!-- Standby banner -->
@@ -25,6 +25,54 @@
         <button class="btn-power reboot" @click="sendAction('reboot')" :disabled="powerBusy">🔄 Riavvia</button>
         <button class="btn-power shutdown" @click="sendAction('shutdown')" :disabled="powerBusy">⏻ Spegni</button>
       </div>
+    </div>
+
+    <!-- Sicurezza PIN -->
+    <div class="card">
+      <h3>Sicurezza PIN 🔐</h3>
+      <p class="card-desc">Modifica il PIN di accesso all'area admin (da 4 a 8 cifre numeriche).</p>
+      <div class="pin-change-grid">
+        <div class="form-group">
+          <label>PIN attuale</label>
+          <input
+            type="password"
+            v-model="pinCurrent"
+            class="input-pin"
+            placeholder="PIN attuale"
+            maxlength="8"
+            inputmode="numeric"
+            pattern="[0-9]*"
+          />
+        </div>
+        <div class="form-group">
+          <label>Nuovo PIN</label>
+          <input
+            type="password"
+            v-model="pinNew"
+            class="input-pin"
+            placeholder="Nuovo PIN (4-8 cifre)"
+            maxlength="8"
+            inputmode="numeric"
+            pattern="[0-9]*"
+          />
+        </div>
+        <div class="form-group">
+          <label>Conferma nuovo PIN</label>
+          <input
+            type="password"
+            v-model="pinConfirm"
+            class="input-pin"
+            placeholder="Ripeti nuovo PIN"
+            maxlength="8"
+            inputmode="numeric"
+            pattern="[0-9]*"
+          />
+        </div>
+      </div>
+      <div v-if="pinChangeError" class="pin-change-error">⚠️ {{ pinChangeError }}</div>
+      <button class="btn-pin-change" @click="changePin" :disabled="pinChangeBusy">
+        {{ pinChangeBusy ? '⏳ Salvataggio...' : '🔐 Cambia PIN' }}
+      </button>
     </div>
 
     <!-- OTA Update -->
@@ -398,6 +446,48 @@ function formatDate(isoStr) {
   }
 }
 
+// PIN change
+const pinCurrent = ref('')
+const pinNew = ref('')
+const pinConfirm = ref('')
+const pinChangeBusy = ref(false)
+const pinChangeError = ref('')
+
+async function changePin() {
+  pinChangeError.value = ''
+  const cur = pinCurrent.value.trim()
+  const nw = pinNew.value.trim()
+  const conf = pinConfirm.value.trim()
+  if (!cur || !nw || !conf) {
+    pinChangeError.value = 'Compila tutti i campi.'
+    return
+  }
+  if (!/^\d{4,8}$/.test(nw)) {
+    pinChangeError.value = 'Il nuovo PIN deve contenere solo cifre (4-8 caratteri).'
+    return
+  }
+  if (nw !== conf) {
+    pinChangeError.value = 'I due PIN non coincidono.'
+    return
+  }
+  pinChangeBusy.value = true
+  try {
+    const api = getApi()
+    await guardedCall(() => api.post('/auth/pin/change', {
+      current_pin: cur,
+      new_pin: nw,
+    }))
+    pinCurrent.value = ''
+    pinNew.value = ''
+    pinConfirm.value = ''
+    showSuccess('PIN cambiato con successo! Effettua nuovamente il login.')
+  } catch (e) {
+    pinChangeError.value = extractApiError(e, 'Errore cambio PIN')
+  } finally {
+    pinChangeBusy.value = false
+  }
+}
+
 onMounted(() => {
   loadStandbyStatus()
   loadOtaStatus()
@@ -492,6 +582,62 @@ onUnmounted(() => {
 .btn-power.standby { background: #3f51b5; color: white; }
 .btn-power.reboot { background: #ff9800; color: white; }
 .btn-power.shutdown { background: #e53935; color: white; }
+
+/* PIN Change */
+.card-desc { color: #aaa; font-size: 0.9rem; margin: 0 0 15px 0; }
+
+.pin-change-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 15px;
+  margin-bottom: 15px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-group label { font-size: 0.9rem; color: #ccc; }
+
+.input-pin {
+  background: #1e1e26;
+  border: 1px solid #3a3a48;
+  color: white;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 1.1rem;
+  letter-spacing: 4px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.input-pin:focus { outline: none; border-color: #ffd27b; }
+
+.pin-change-error {
+  color: #ef9a9a;
+  background: #3b1212;
+  border: 1px solid #c62828;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 0.9rem;
+  margin-bottom: 12px;
+}
+
+.btn-pin-change {
+  background: #3f51b5;
+  color: white;
+  border: none;
+  padding: 11px 22px;
+  border-radius: 8px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.btn-pin-change:hover { opacity: 0.85; }
+.btn-pin-change:disabled { background: #555; color: #888; cursor: not-allowed; }
 
 /* OTA */
 .ota-status-bar {

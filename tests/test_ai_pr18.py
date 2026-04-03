@@ -268,16 +268,22 @@ class TestAiClearHistory:
 # --- G) POST /ai/chat: no client -> 503 --------------------------------------
 
 class TestAiChatNoClient:
-    def test_chat_without_openai_returns_503(self, client):
+    def test_chat_without_openai_returns_fallback_reply(self, client):
+        """When OpenAI is not configured, the endpoint returns 200 with a friendly fallback reply."""
         with patch("api.ai.get_openai_client", return_value=None):
             r = client.post(
                 "/api/ai/chat",
                 data=json.dumps({"text": "ciao"}),
                 content_type="application/json",
             )
-        assert r.status_code == 503
+        assert r.status_code == 200
+        data = json.loads(r.data)
+        assert data.get("status") == "ok"
+        assert data.get("offline") is True
+        assert isinstance(data.get("reply"), str) and len(data["reply"]) > 0
 
-    def test_chat_without_openai_returns_code_field(self, client):
+    def test_chat_without_openai_no_503_error_code(self, client):
+        """When OpenAI is not configured, the response must NOT contain openai_not_configured error."""
         with patch("api.ai.get_openai_client", return_value=None):
             r = client.post(
                 "/api/ai/chat",
@@ -285,7 +291,7 @@ class TestAiChatNoClient:
                 content_type="application/json",
             )
         data = json.loads(r.data)
-        assert data.get("code") == "openai_not_configured"
+        assert data.get("code") != "openai_not_configured"
 
     def test_chat_empty_text_returns_400(self, client):
         r = client.post(
@@ -446,8 +452,9 @@ class TestAiChatError:
                 content_type="application/json",
             )
         events = get_events(limit=10)
-        ai_errors = [e for e in events if e.get("area") == "ai" and e.get("severity") == "error"]
-        assert len(ai_errors) > 0
+        # Now logs a warning (fallback reply sent) instead of an error
+        ai_events = [e for e in events if e.get("area") == "ai" and e.get("severity") in ("error", "warning")]
+        assert len(ai_events) > 0
 
 
 # --- K) ai_runtime snapshot includes expected keys ---------------------------

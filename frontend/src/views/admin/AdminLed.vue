@@ -21,6 +21,14 @@
           <span class="status-value">{{ status.applied?.effect_id || status.effective_effect }}</span>
         </div>
         <div class="status-item">
+          <span class="status-label">Intensità</span>
+          <span class="status-value">{{ status.applied?.brightness ?? '—' }}%</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">Velocità</span>
+          <span class="status-value">{{ status.applied?.speed ?? '—' }}%</span>
+        </div>
+        <div class="status-item">
           <span class="status-label">Override attivo</span>
           <span class="status-value" :class="{ 'text-green': status.override_active }">
             {{ status.override_active ? 'Sì' : 'No' }}
@@ -70,11 +78,11 @@
             <input type="color" v-model="masterSettings.color" />
           </div>
           <div class="form-group">
-            <label>Luminosità {{ masterSettings.brightness }}%</label>
+            <label>Intensità {{ masterSettings.brightness }}%</label>
             <input type="range" min="0" max="100" v-model.number="masterSettings.brightness" />
           </div>
           <div class="form-group">
-            <label>Velocità {{ masterSettings.speed }}%</label>
+            <label>Velocità effetto {{ masterSettings.speed }}%</label>
             <input type="range" min="0" max="100" v-model.number="masterSettings.speed" />
           </div>
         </div>

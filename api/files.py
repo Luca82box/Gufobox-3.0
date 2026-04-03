@@ -597,6 +597,32 @@ def api_files_details():
 
 _upload_sessions: dict = {}
 _upload_lock = threading.Lock()
+_UPLOAD_SESSION_MAX_AGE_SEC = 3600  # 1 ora — sessioni abbandonate
+
+
+def _cleanup_stale_upload_sessions():
+    """Rimuove sessioni di upload abbandonate (più vecchie di _UPLOAD_SESSION_MAX_AGE_SEC)."""
+    now = _time_import()
+    with _upload_lock:
+        stale = [
+            sid for sid, sess in _upload_sessions.items()
+            if now - sess.get("created_ts", now) > _UPLOAD_SESSION_MAX_AGE_SEC
+        ]
+        for sid in stale:
+            sess = _upload_sessions.pop(sid)
+            try:
+                tmp = sess.get("tmp_path", "")
+                if tmp and os.path.exists(tmp):
+                    os.remove(tmp)
+            except Exception:
+                pass
+    if stale:
+        log(f"Upload sessions cleanup: rimosse {len(stale)} sessioni abbandonate", "info")
+
+
+def _time_import():
+    import time as _t
+    return _t.time()
 
 
 @files_bp.route("/files/upload/init", methods=["POST"])
@@ -620,6 +646,7 @@ def api_files_upload_init():
         return jsonify({"error": "Cartella destinazione non valida"}), 400
 
     import uuid
+    import time as _t
     session_id = str(uuid.uuid4())
     tmp_path = os.path.join(_cfg.CHUNK_UPLOAD_ROOT, session_id + ".tmp")
 
@@ -630,7 +657,14 @@ def api_files_upload_init():
             "total_size": int(total_size),
             "received": 0,
             "tmp_path": tmp_path,
+            "created_ts": _t.time(),
         }
+    # Cleanup delle sessioni abbandonate (best-effort, non blocca la risposta)
+    try:
+        import eventlet as _ev
+        _ev.spawn(_cleanup_stale_upload_sessions)
+    except Exception:
+        pass
 
     open(tmp_path, "wb").close()
 

@@ -47,6 +47,7 @@ from api.audio import audio_bp
 from api.wizard import wizard_bp
 
 import os
+import signal
 
 # Percorso alla build del frontend Vue (generata da `npm run build`)
 _FRONTEND_DIST = os.path.join(os.path.dirname(__file__), "frontend", "dist")
@@ -127,7 +128,15 @@ def socket_connect():
 # =========================================================
 if __name__ == "__main__":
     log(f"🚀 Avvio GufoBox API v{API_VERSION} (Modular Eventlet Mode)...", "info")
-    
+
+    # Registra handler per SIGTERM (usato da systemd e Docker) e SIGINT (Ctrl+C)
+    def _signal_handler(signum, frame):
+        log(f"Segnale {signum} ricevuto — avvio shutdown ordinato.", "warning")
+        request_shutdown()
+
+    signal.signal(signal.SIGTERM, _signal_handler)
+    signal.signal(signal.SIGINT, _signal_handler)
+
     try:
         # 1. Inizializza Database SQLite e Servizi di Rete (mDNS)
         log("Inizializzazione Database e Rete Locale...", "info")

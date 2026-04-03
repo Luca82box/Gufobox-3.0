@@ -1,5 +1,7 @@
 import os
 import hashlib
+import random
+import time as _time_mod
 from flask import Blueprint, request, jsonify, send_file
 
 # Importiamo la configurazione e lo stato
@@ -15,6 +17,59 @@ except ImportError:
     OpenAI = None
 
 ai_bp = Blueprint('ai', __name__)
+
+# =========================================================
+# FALLBACK REPLIES (quando OpenAI non è disponibile)
+# =========================================================
+_AI_FALLBACK_REPLIES = [
+    "Uhuu! 🦉 Non riesco a sentire bene in questo momento. Riprova tra poco!",
+    "Zzz... Il mio cervello da gufetto ha bisogno di un riposino magico. Riprova! 🌟",
+    "Il Gufetto sta facendo un pisolino veloce... Torna tra un momento! 🦉💤",
+    "Uhuu! Ho qualcosa in gola... Non riesco a rispondere adesso. Riprova! 🎶",
+    "Il mio magico cristallo è un po' appannato oggi. Riprova tra poco! ✨",
+]
+
+# =========================================================
+# TTS CACHE CLEANUP
+# =========================================================
+_TTS_CACHE_MAX_FILES = 200        # Numero massimo file in cache
+_TTS_CACHE_MAX_AGE_SEC = 7 * 86400  # 7 giorni
+
+
+def cleanup_tts_cache():
+    """Rimuove file TTS dalla cache se troppo vecchi o troppo numerosi."""
+    try:
+        if not os.path.isdir(AI_TTS_CACHE_DIR):
+            return
+        files = []
+        for fname in os.listdir(AI_TTS_CACHE_DIR):
+            fpath = os.path.join(AI_TTS_CACHE_DIR, fname)
+            if os.path.isfile(fpath):
+                files.append((fpath, os.path.getmtime(fpath)))
+        # Rimuovi file più vecchi di _TTS_CACHE_MAX_AGE_SEC
+        now = _time_mod.time()
+        removed = 0
+        for fpath, mtime in files:
+            if now - mtime > _TTS_CACHE_MAX_AGE_SEC:
+                try:
+                    os.remove(fpath)
+                    removed += 1
+                except Exception:
+                    pass
+        # Se ancora troppi file, rimuovi i più vecchi
+        files = [(p, m) for p, m in files if os.path.exists(p)]
+        if len(files) > _TTS_CACHE_MAX_FILES:
+            files.sort(key=lambda x: x[1])
+            for fpath, _ in files[:len(files) - _TTS_CACHE_MAX_FILES]:
+                try:
+                    os.remove(fpath)
+                    removed += 1
+                except Exception:
+                    pass
+        if removed:
+            log(f"TTS cache cleanup: rimossi {removed} file", "info")
+    except Exception as e:
+        log(f"Errore TTS cache cleanup: {e}", "warning")
 
 # =========================================================
 # EDUCATIONAL AI CONSTANTS
@@ -343,9 +398,19 @@ def api_ai_chat():
 
     client = get_openai_client()
     if not client:
-        msg = "OpenAI non configurato. Inserisci la API Key nelle impostazioni."
-        log_event("ai", "error", "AI chat fallita: OpenAI non configurato")
-        return jsonify({"error": msg, "code": "openai_not_configured"}), 503
+        # Risposta di fallback amichevole quando OpenAI non è configurato/disponibile
+        reply = random.choice(_AI_FALLBACK_REPLIES)
+        _set_ai_state(AI_STATUS_IDLE)
+        import time as _time
+        ai_runtime["history"].append({
+            "role": "assistant",
+            "content": reply,
+            "ts": int(_time.time()),
+        })
+        if len(ai_runtime["history"]) > 10:
+            ai_runtime["history"] = ai_runtime["history"][-10:]
+        log_event("ai", "warning", "AI chat: OpenAI non configurato, risposta fallback inviata")
+        return jsonify({"status": "ok", "reply": reply, "audio_url": None, "offline": True})
 
     # 1. Aggiungiamo il messaggio dell'utente alla storia con timestamp
     import time as _time
@@ -405,6 +470,12 @@ def api_ai_chat():
                     input=ai_reply
                 )
                 tts_response.stream_to_file(audio_path)
+                # Pulizia cache TTS in background (best-effort)
+                try:
+                    import eventlet as _ev
+                    _ev.spawn(cleanup_tts_cache)
+                except Exception:
+                    pass
                 
             audio_url = f"/api/ai/tts/{text_hash}.mp3"
 

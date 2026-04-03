@@ -12,8 +12,12 @@
         ⚠️ Offline
       </div>
 
-      <div class="top-icon battery-icon" title="Batteria">
-        🔋 100%
+      <div
+        class="top-icon battery-icon"
+        :title="`Batteria: ${batteryPercent != null ? batteryPercent + '%' : 'N/D'}`"
+        :class="batteryClass"
+      >
+        {{ batteryIcon }} {{ batteryPercent != null ? batteryPercent + '%' : '' }}
       </div>
 
       <button 
@@ -29,15 +33,28 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
 import { useApi } from '../composables/useApi'
 import { useAuth } from '../composables/useAuth'
 
-// Importiamo lo stato della rete e dell'autenticazione
-const { offline } = useApi()
+const { offline, batteryPercent } = useApi()
 const { adminUnlocked, goAdmin } = useAuth()
 
-// Definiamo un evento ("emit") nel caso volessimo far sapere 
-// al componente padre (App.vue) che l'utente vuole tornare alla Home
+const batteryIcon = computed(() => {
+  const p = batteryPercent.value
+  if (p == null) return '🔋'
+  if (p > 60) return '🔋'
+  if (p > 20) return '🪫'
+  return '🪫'
+})
+
+const batteryClass = computed(() => {
+  const p = batteryPercent.value
+  if (p == null) return ''
+  if (p <= 20) return 'battery-low'
+  return ''
+})
+
 const emit = defineEmits(['go-home'])
 
 function goHome() {
@@ -106,6 +123,16 @@ function handleAdminClick() {
 
 .text-red {
   color: #ff4d4d;
+}
+
+.battery-low {
+  color: #ff8a80;
+  animation: blink-battery 1.5s infinite;
+}
+
+@keyframes blink-battery {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
 
 .btn-admin-toggle {

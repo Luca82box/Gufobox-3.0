@@ -9,7 +9,7 @@ import zipfile
 from datetime import datetime
 
 from flask import Blueprint, request, jsonify
-from core.state import media_runtime, alarms_list, bus, now_ts
+from core.state import media_runtime, led_runtime, alarms_list, bus, now_ts
 from core.utils import run_cmd, t, log
 from core.hardware import perform_standby, is_in_standby, get_standby_state
 from core.event_log import log_event
@@ -55,6 +55,84 @@ def api_system():
         return jsonify({"status": "ok", "message": t("ok_shutdown")})
 
     return jsonify({"error": "Azione non riconosciuta. Valori consentiti: standby, reboot, shutdown"}), 400
+
+
+# =========================================================
+# MODALITÀ NOTTE
+# =========================================================
+
+# Stato in-memory per salvare/ripristinare LED e volume precedenti
+_night_mode_state = {
+    "active": False,
+    "prev_led": None,
+    "prev_volume": None,
+}
+
+@system_bp.route("/system/night_mode", methods=["POST"])
+def api_night_mode():
+    """
+    Attiva/disattiva la modalità notte.
+    Payload: {"enabled": true|false}
+    Quando attivata: LED breathing caldo (#ff8833), volume a 25%.
+    Quando disattivata: ripristina stato precedente.
+    """
+    from api.led import load_led_master, save_led_master, refresh_effective_led
+
+    data = request.get_json(silent=True) or {}
+    enabled = bool(data.get("enabled", True))
+
+    if enabled:
+        # Salva lo stato corrente LED e volume
+        _night_mode_state["prev_led"] = dict(load_led_master())
+        _night_mode_state["prev_volume"] = media_runtime.get("current_volume", 60)
+
+        # Imposta LED: breathing caldo
+        night_master = {
+            "enabled": True,
+            "override_active": True,
+            "settings": {
+                "enabled": True,
+                "effect_id": "breathing",
+                "color": "#ff8833",
+                "brightness": 20,
+                "speed": 15,
+                "params": {},
+            },
+        }
+        save_led_master(night_master)
+        refresh_effective_led()
+
+        # Abbassa volume a 25%
+        run_cmd(["amixer", "sset", "Master", "25%"])
+        media_runtime["current_volume"] = 25
+        bus.mark_dirty("media")
+
+        _night_mode_state["active"] = True
+        bus.emit_notification("Modalità Notte attivata 🌙", "info")
+        log("Modalità notte attivata", "info")
+
+        return jsonify({"status": "ok", "night_mode": True})
+
+    else:
+        # Ripristina LED precedente
+        if _night_mode_state.get("prev_led"):
+            save_led_master(_night_mode_state["prev_led"])
+            refresh_effective_led()
+
+        # Ripristina volume precedente
+        prev_vol = _night_mode_state.get("prev_volume", 60)
+        run_cmd(["amixer", "sset", "Master", f"{prev_vol}%"])
+        media_runtime["current_volume"] = prev_vol
+        bus.mark_dirty("media")
+
+        _night_mode_state["active"] = False
+        _night_mode_state["prev_led"] = None
+        _night_mode_state["prev_volume"] = None
+        bus.emit_notification("Modalità Notte disattivata ☀️", "info")
+        log("Modalità notte disattivata", "info")
+
+        return jsonify({"status": "ok", "night_mode": False})
+
 
 # =========================================================
 # SLEEP TIMER (Spegnimento automatico)

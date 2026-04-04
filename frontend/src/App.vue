@@ -212,7 +212,8 @@ onBeforeUnmount(() => {
 body {
   margin: 0;
   padding: 0;
-  background-color: var(--bg-color);
+  background: linear-gradient(180deg, #0d0d2b 0%, #1a0a2e 50%, #2d1b4e 100%);
+  background-attachment: fixed;
   color: var(--text-main);
   font-family: var(--font-family);
   -webkit-font-smoothing: antialiased;

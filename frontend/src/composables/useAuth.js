@@ -4,6 +4,7 @@ import { useApi } from './useApi'
 // Stato condiviso
 const adminUnlocked = ref(false)
 const showAdmin = ref(false)
+const showAiChat = ref(false)
 
 // Stato specifico del modale PIN
 const showPinModal = ref(false)
@@ -137,6 +138,7 @@ export function useAuth() {
   return {
     adminUnlocked,
     showAdmin,
+    showAiChat,
     showPinModal,
     pinInput,
     pinBusy,

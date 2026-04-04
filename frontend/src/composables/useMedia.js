@@ -106,6 +106,16 @@ export function useMedia() {
     }
   }
 
+  async function mediaTogglePause() {
+    try {
+      const api = getApi()
+      await guardedCall(() => api.post('/media/toggle_pause'))
+      await loadMediaStatus()
+    } catch (e) {
+      alert(extractApiError(e, 'Errore play/pausa'))
+    }
+  }
+
   // 5. Utility e Variabili Calcolate (Barra di Progresso)
   function fmtTime(sec) {
     const n = Math.max(0, Math.floor(Number(sec || 0)))
@@ -146,6 +156,7 @@ export function useMedia() {
     mediaPrev,
     mediaNext,
     mediaStop,
+    mediaTogglePause,
     
     // Utility e computed
     fmtTime,

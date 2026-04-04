@@ -205,7 +205,6 @@
     <p v-if="wizardCatError" class="banner banner-error" style="margin-top:.5rem;">⚠️ {{ wizardCatError }}</p>
     <p v-if="wizardCatSuccess" class="banner banner-success" style="margin-top:.5rem;">✅ {{ wizardCatSuccess }}</p>
   </div>
-</div>
 </template>
 
 <script setup>

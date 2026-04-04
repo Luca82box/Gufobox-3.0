@@ -181,6 +181,40 @@ In questa modalità GufoBox si presenta come uno **speaker Bluetooth** a cui un 
 
 - **Backend**: Python, Flask, Flask-SocketIO, Eventlet
 - **Frontend**: Vue 3, Composition API, Vite
+- **PWA**: vite-plugin-pwa, Workbox
 - **Hardware**: Raspberry Pi, GPIO, SPI, I2C
 - **AI**: OpenAI API (chat + TTS)
 - **Media**: MPV (con controllo IPC socket)
+
+---
+
+## 📱 GufoBox come Progressive Web App (PWA)
+
+GufoBox è installabile come app nativa su smartphone e tablet tramite la funzione PWA.
+Questo è particolarmente utile quando GufoBox è sulla rete locale del Raspberry Pi.
+
+### Come installare su Android (Chrome)
+
+1. Apri Chrome sul tuo smartphone Android
+2. Naviga verso l'indirizzo IP del Raspberry Pi, es. `http://192.168.1.x:5000`
+3. Tocca il menu (⋮) → **"Aggiungi a schermata Home"** oppure cerca il banner di installazione
+4. Conferma: GufoBox apparirà come un'app nella schermata home
+
+### Come installare su iOS (Safari)
+
+1. Apri Safari sul tuo iPhone/iPad
+2. Naviga verso l'indirizzo IP del Raspberry Pi, es. `http://192.168.1.x:5000`
+3. Tocca il pulsante **Condividi** (□↑) in basso
+4. Scorri e seleziona **"Aggiungi a schermata Home"**
+5. Conferma il nome e tocca **Aggiungi**
+
+### Funzionalità offline
+
+Una volta installata, GufoBox utilizza un Service Worker (Workbox) per:
+
+- **Cache delle risorse statiche** (JS, CSS, immagini): strategia `CacheFirst` — le risorse vengono caricate dalla cache dopo la prima visita, anche senza internet
+- **Chiamate API** (`/api/`): strategia `NetworkFirst` — il dispositivo tenta prima la rete, poi la cache come fallback
+- **WebSocket** (`/socket.io`): il Service Worker **non interferisce** con le connessioni WebSocket, che rimangono sempre in tempo reale
+
+> **Nota**: in rete locale (stesso Wi-Fi del Raspberry Pi) la PWA funziona al 100% anche senza connessione internet.
+

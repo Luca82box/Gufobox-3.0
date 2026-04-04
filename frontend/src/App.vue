@@ -55,8 +55,11 @@ function initStarBackground(canvas) {
   canvas.width = W
   canvas.height = H
 
-  const NUM_STARS = 120
-  const NUM_COMETS = 3
+  // Riduce il numero di stelle su schermi piccoli per risparmiare batteria e CPU.
+  // Threshold 768px copre tutti i telefoni e i tablet in portrait.
+  const isMobile = W < 768
+  const NUM_STARS = isMobile ? 40 : 120
+  const NUM_COMETS = isMobile ? 1 : 3
 
   const stars = Array.from({ length: NUM_STARS }, () => ({
     x: Math.random() * W,
@@ -89,7 +92,23 @@ function initStarBackground(canvas) {
   }
   window.addEventListener('resize', resize)
 
+  // Pausa l'animazione quando la scheda/app non è visibile per risparmiare
+  // CPU e batteria (importante soprattutto su dispositivi mobili).
+  let paused = false
+  function onVisibilityChange() {
+    paused = document.hidden
+    if (!paused && !_bgAnimId) {
+      // Riprende il loop se era stato fermato
+      draw()
+    }
+  }
+  document.addEventListener('visibilitychange', onVisibilityChange)
+
   function draw() {
+    if (paused) {
+      _bgAnimId = null
+      return
+    }
     ctx.clearRect(0, 0, W, H)
 
     // Stelle
@@ -131,7 +150,9 @@ function initStarBackground(canvas) {
   draw()
   return () => {
     window.removeEventListener('resize', resize)
-    cancelAnimationFrame(_bgAnimId)
+    document.removeEventListener('visibilitychange', onVisibilityChange)
+    if (_bgAnimId) cancelAnimationFrame(_bgAnimId)
+    _bgAnimId = null
   }
 }
 

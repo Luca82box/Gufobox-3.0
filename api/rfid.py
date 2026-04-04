@@ -17,6 +17,7 @@ PR 31: aggiunto mode=voice_recording per riprodurre registrazioni vocali via sta
 import os
 import re
 import time
+import ipaddress
 from urllib.parse import urlparse
 
 from flask import Blueprint, request, jsonify
@@ -46,12 +47,46 @@ _VALID_ACTIVITY_MODES = {
 _VALID_LANGUAGE_TARGETS = {"english", "spanish", "german", "french", "japanese", "chinese"}
 _HEX_COLOR_RE = re.compile(r'^#[0-9a-fA-F]{3,8}$')
 
+# Reti IP private/loopback da bloccare per prevenire SSRF.
+# Un profilo RFID con URL puntato a 127.0.0.1 o 192.168.x.x potrebbe essere
+# usato per fare richieste verso servizi interni del Raspberry Pi.
+_PRIVATE_IP_NETWORKS = [
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("169.254.0.0/16"),   # link-local
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),          # ULA IPv6
+]
+
+
+def _is_private_host(host: str) -> bool:
+    """Ritorna True se host è un indirizzo IP in un range privato/loopback."""
+    try:
+        addr = ipaddress.ip_address(host)
+        return any(addr in net for net in _PRIVATE_IP_NETWORKS)
+    except ValueError:
+        # host è un hostname (non IP diretto) — la risoluzione DNS avviene
+        # al momento della riproduzione, accettiamo qui e blocchiamo a runtime.
+        return False
+
 
 def _is_valid_http_url(url):
-    """Verifica che la stringa sia un URL HTTP/HTTPS valido con host."""
+    """
+    Verifica che la stringa sia un URL HTTP/HTTPS valido con host non privato.
+    Blocca indirizzi IP in range privati/loopback (prevenzione SSRF).
+    """
     try:
         parsed = urlparse(url)
-        return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        if not parsed.netloc:
+            return False
+        host = parsed.hostname or ""
+        if _is_private_host(host):
+            return False
+        return True
     except Exception:
         return False
 

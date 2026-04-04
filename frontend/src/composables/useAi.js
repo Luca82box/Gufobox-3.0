@@ -24,7 +24,17 @@ export function useAi() {
       speechSupported.value = false
       return
     }
-    speechSupported.value = true
+    // Rileva Safari/iOS: su questi browser l'API esiste ma ha limitazioni severe
+    // (non funziona in background, richiede interazione utente, instabile su iOS).
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream
+    const isSafariBrowser = /^((?!chrome|android).)*safari/i.test(navigator.userAgent)
+    if (isIOS || isSafariBrowser) {
+      // Supporto parziale: l'API è presente ma inaffidabile. Permettiamo il tentativo
+      // ma impostiamo un flag per mostrare l'avviso appropriato in toggleListening().
+      speechSupported.value = true
+    } else {
+      speechSupported.value = true
+    }
     recognition = new SpeechRecognition()
     recognition.lang = 'it-IT'
     recognition.interimResults = false
@@ -52,6 +62,10 @@ export function useAi() {
         aiError.value = 'Microfono non autorizzato. Controlla i permessi del browser.'
       } else if (e.error === 'no-speech') {
         aiError.value = 'Nessun audio rilevato. Riprova.'
+      } else if (e.error === 'service-not-allowed') {
+        // Errore tipico di Safari iOS quando il contesto non è sicuro o l'utente non ha
+        // ancora interagito con la pagina.
+        aiError.value = 'Microfono non disponibile. Su Safari/iOS apri la pagina tramite HTTPS e premi prima il tasto prima di parlare.'
       } else {
         aiError.value = `Errore microfono: ${e.error}`
       }
@@ -71,7 +85,18 @@ export function useAi() {
 
   function toggleListening() {
     if (!speechSupported.value || !recognition) {
-      aiError.value = 'Il tuo browser non supporta il riconoscimento vocale.'
+      // Messaggio differenziato per Safari/iOS dove l'API manca completamente
+      const isIOS = typeof navigator !== 'undefined' &&
+        /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream
+      const isSafariBrowser = typeof navigator !== 'undefined' &&
+        /^((?!chrome|android).)*safari/i.test(navigator.userAgent)
+      if (isIOS) {
+        aiError.value = 'Il riconoscimento vocale non è supportato su iOS. Usa Chrome per Android o digita il messaggio.'
+      } else if (isSafariBrowser) {
+        aiError.value = 'Il riconoscimento vocale non è supportato su Safari. Usa Chrome o Firefox.'
+      } else {
+        aiError.value = 'Il tuo browser non supporta il riconoscimento vocale.'
+      }
       return
     }
     aiError.value = null

@@ -1180,6 +1180,10 @@ def _apply_profile_led(rfid_code, profile):
         led_runtime["master_speed"] = led_block.get("speed", 30)
         led_runtime["led_source"] = "rfid_profile"
         led_runtime["led_rfid_code"] = rfid_code
+        # current_rfid è usato da api/led.py get_effective_led_assignment per
+        # ricalcolare l'effetto quando cambia il master; va impostato anche qui
+        # per mantenere la coerenza con il trigger legacy di api/media.py.
+        led_runtime["current_rfid"] = rfid_code
         bus.mark_dirty("led")
         bus.request_emit("public")
         log(f"LED profilo applicato per RFID {rfid_code}: {led_block.get('effect_id')}", "info")

@@ -43,10 +43,16 @@ def _resolve_safe(path: str):
     """
     Risolve il path e verifica che sia dentro _cfg.FILE_MANAGER_ROOTS.
     Ritorna il path reale o None se non autorizzato.
+
+    Usa `+ os.sep` nel confronto per prevenire path traversal in cui un
+    prefisso comune non coincide con il separatore di directory, ad es.
+    /home/gufoboxbad sarebbe accettato se la radice è /home/gufobox senza il sep.
     """
     real = os.path.realpath(path)
-    if any(real.startswith(os.path.realpath(r)) for r in _cfg.FILE_MANAGER_ROOTS):
-        return real
+    for r in _cfg.FILE_MANAGER_ROOTS:
+        r_real = os.path.realpath(r)
+        if real == r_real or real.startswith(r_real + os.sep):
+            return real
     return None
 
 
@@ -114,7 +120,11 @@ def api_files_list():
     filter_type = request.args.get("filter_type", "") # "" | audio | video | image | dir | archive | text
 
     real_path = os.path.realpath(req_path)
-    if not any(real_path.startswith(os.path.realpath(r)) for r in _cfg.FILE_MANAGER_ROOTS):
+    allowed = any(
+        real_path == os.path.realpath(r) or real_path.startswith(os.path.realpath(r) + os.sep)
+        for r in _cfg.FILE_MANAGER_ROOTS
+    )
+    if not allowed:
         return jsonify({"error": "Access Denied"}), 403
 
     if not os.path.isdir(real_path):
@@ -414,11 +424,15 @@ def _run_uncompress(job_id: str, archive_path: str, destination: str):
     """Worker thread: decomprime un archivio zip nella destination."""
     update_job(job_id, status="running", message="Decompressione in corso...")
     try:
+        real_dest = os.path.realpath(destination)
         with zipfile.ZipFile(archive_path, "r") as zf:
-            # Sicurezza: controlla path traversal nei membri
+            # Sicurezza: controlla path traversal nei membri.
+            # Il confronto include + os.sep per evitare che un nome come
+            # "destination_evil/file" passi per via del prefisso comune.
             for member in zf.namelist():
                 member_path = os.path.realpath(os.path.join(destination, member))
-                if not member_path.startswith(os.path.realpath(destination)):
+                if not (member_path == real_dest or
+                        member_path.startswith(real_dest + os.sep)):
                     finish_job(job_id, status="error",
                                error=f"Path traversal nel membro: {member}")
                     log_event("files", "error", "Uncompress rifiutata: path traversal",

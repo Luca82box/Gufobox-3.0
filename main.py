@@ -68,17 +68,22 @@ def create_app():
     # Registriamo tutte le rotte API
     log("Registrazione dei moduli API (Blueprints)...", "info")
     app.register_blueprint(system_bp, url_prefix='/api')
+    # rfid_bp must be registered before media_bp: both define POST /rfid/trigger and
+    # Flask uses the first match in the URL map.  rfid_bp carries the full profile
+    # implementation (media_folder, webradio, ai_chat, rss_feed, edu_ai, web_media,
+    # voice_recording) with automatic fallback to the legacy rfid_map; media_bp only
+    # handles the legacy map and must not shadow the full implementation.
+    app.register_blueprint(rfid_bp, url_prefix='/api')
     app.register_blueprint(media_bp, url_prefix='/api')
     app.register_blueprint(files_bp, url_prefix='/api')
     app.register_blueprint(ai_bp, url_prefix='/api')
     app.register_blueprint(network_bp, url_prefix='/api')
     app.register_blueprint(settings_bp, url_prefix='/api')
-    app.register_blueprint(voice_bp, url_prefix='/api') # <-- NUOVO: Registrato
+    app.register_blueprint(voice_bp, url_prefix='/api')
     app.register_blueprint(led_bp, url_prefix='/api')
     app.register_blueprint(auth_bp, url_prefix='/api')
     app.register_blueprint(jobs_bp, url_prefix='/api')
     app.register_blueprint(diag_bp, url_prefix='/api')
-    app.register_blueprint(rfid_bp, url_prefix='/api')
     app.register_blueprint(rss_bp, url_prefix='/api')
     app.register_blueprint(audio_bp, url_prefix='/api')
     app.register_blueprint(wizard_bp, url_prefix='/api')

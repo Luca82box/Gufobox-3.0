@@ -108,7 +108,8 @@ async function toggleNightMode() {
 const batteryIcon = computed(() => {
   const p = batteryPercent.value
   if (p == null) return '🔋'
-  if (p > 20) return '🔋'
+  if (p > 60) return '🔋'
+  if (p > 20) return '🪫'
   return '🪫'
 })
 

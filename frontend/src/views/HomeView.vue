@@ -121,7 +121,7 @@
             placeholder="Chiedi qualcosa al gufetto..."
           />
 
-          <button @click="() => sendAiMessage()" class="btn-send" :disabled="!aiInputText.trim()">
+          <button @click="() => sendAiMessage()" class="btn-send" :disabled="!aiInputText.trim()" aria-label="Invia messaggio">
             🚀
           </button>
         </div>

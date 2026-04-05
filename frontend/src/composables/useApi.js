@@ -16,6 +16,7 @@ const batteryPercent = ref(null)  // percentuale batteria aggiornata dal socket
 // Istanze private interne al modulo
 let apiInstance = null
 let socketInstance = null
+let _lastCallbacks = {}
 
 export function useApi() {
   
@@ -108,6 +109,12 @@ export function useApi() {
   function connectSocket(callbacks = {}) {
     if (!apiBase.value) return
 
+    // Salva i callback se forniti, altrimenti riusa quelli dell'ultima connessione
+    if (Object.keys(callbacks).length > 0) {
+      _lastCallbacks = callbacks
+    }
+    const cbs = Object.keys(callbacks).length > 0 ? callbacks : _lastCallbacks
+
     disconnectSocket()
 
     socketInstance = io(apiBase.value, {
@@ -123,12 +130,12 @@ export function useApi() {
       socketConnected.value = true
       offline.value = false
       apiReady.value = true
-      if (callbacks.onConnect) callbacks.onConnect()
+      if (cbs.onConnect) cbs.onConnect()
     })
 
     socketInstance.on('disconnect', () => {
       socketConnected.value = false
-      if (callbacks.onDisconnect) callbacks.onDisconnect()
+      if (cbs.onDisconnect) cbs.onDisconnect()
     })
 
     socketInstance.on('connect_error', () => {
@@ -136,10 +143,10 @@ export function useApi() {
     })
 
     // Iniezione degli handler esterni
-    if (callbacks.onPublicSnapshot) socketInstance.on('public_snapshot', callbacks.onPublicSnapshot)
-    if (callbacks.onAdminSnapshot) socketInstance.on('admin_snapshot', callbacks.onAdminSnapshot)
-    if (callbacks.onJobsUpdate) socketInstance.on('jobs_update', callbacks.onJobsUpdate)
-    if (callbacks.onOtaUpdate) socketInstance.on('ota_update', callbacks.onOtaUpdate)
+    if (cbs.onPublicSnapshot) socketInstance.on('public_snapshot', cbs.onPublicSnapshot)
+    if (cbs.onAdminSnapshot) socketInstance.on('admin_snapshot', cbs.onAdminSnapshot)
+    if (cbs.onJobsUpdate) socketInstance.on('jobs_update', cbs.onJobsUpdate)
+    if (cbs.onOtaUpdate) socketInstance.on('ota_update', cbs.onOtaUpdate)
   }
 
   function disconnectSocket() {

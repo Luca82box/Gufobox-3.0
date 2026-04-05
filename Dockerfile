@@ -38,9 +38,9 @@ COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 # Espone la porta del server Flask (serve sia le API che il frontend)
 EXPOSE 5000
 
-# Health check minimale: verifica che il server risponda sull'endpoint /api/ping
+# Health check minimale: verifica che il server risponda sull'endpoint /api/health
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/ping')" || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/health')" || exit 1
 
 # Avvia il backend
 CMD ["python", "main.py"]

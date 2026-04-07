@@ -25,8 +25,7 @@
 </template>
 
 <script setup>
-import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { onMounted, onBeforeUnmount, ref } from 'vue'
 
 // Importiamo i Componenti Visivi
 import TopBar from './components/TopBar.vue'
@@ -43,14 +42,6 @@ import { useMedia } from './composables/useMedia'
 const { selectApiBase, connectSocket, disconnectSocket, apiReady, offline, batteryPercent } = useApi()
 const { restoreSession, showAdmin, adminUnlocked, logoutAdmin } = useAuth()
 
-const router = useRouter()
-const route = useRoute()
-
-// Sincronizza il router con lo stato showAdmin
-watch(showAdmin, (val) => {
-  const target = val ? '/admin' : '/'
-  if (route.path !== target) router.replace(target)
-})
 const { updateAiRuntime } = useAi()
 const { loadMediaStatus } = useMedia()
 
@@ -193,12 +184,7 @@ onMounted(async () => {
     // 2. Controlla se il genitore aveva già inserito il PIN in precedenza
     await restoreSession()
 
-    // 3. Se l'utente naviga direttamente a /admin, aggiorna showAdmin
-    if (route.path === '/admin' && adminUnlocked.value) {
-      showAdmin.value = true
-    }
-
-    // 4. Connette il Socket.io per ricevere dati in tempo reale dal Python
+    // 3. Connette il Socket.io per ricevere dati in tempo reale dal Python
     connectSocket({
       onConnect: onReconnect,
       onPublicSnapshot: (data) => {

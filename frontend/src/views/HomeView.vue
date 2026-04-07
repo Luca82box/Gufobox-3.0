@@ -165,7 +165,7 @@ let pollingTimer = null
 onMounted(() => {
   initSpeechRecognition()
   loadMediaStatus()
-  pollingTimer = setInterval(() => { loadMediaStatus() }, 1000)
+  pollingTimer = setInterval(() => { loadMediaStatus() }, 3000)
 })
 
 onBeforeUnmount(() => {

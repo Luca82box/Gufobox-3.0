@@ -205,3 +205,204 @@ def test_require_admin_allows_authenticated(app, client):
     rv = client.get("/api/protected-test2")
     assert rv.status_code == 200
     assert rv.get_json()["ok"] is True
+
+
+# ─── test pin/change ─────────────────────────────────────────────────────────
+
+def test_pin_change_success(client):
+    """Cambio PIN riuscito con autenticazione valida."""
+    login_rv = client.post("/api/admin/login", json={"pin": "1234"})
+    token = login_rv.get_json()["admin_token"]
+
+    rv = client.post(
+        "/api/auth/pin/change",
+        json={"current_pin": "1234", "new_pin": "5678"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert rv.status_code == 200
+    data = rv.get_json()
+    assert data["status"] == "ok"
+
+
+def test_pin_change_requires_auth(client):
+    """Cambio PIN deve essere rifiutato senza autenticazione (401)."""
+    rv = client.post(
+        "/api/auth/pin/change",
+        json={"current_pin": "1234", "new_pin": "5678"},
+    )
+    assert rv.status_code == 401
+
+
+def test_pin_change_wrong_current_pin(client):
+    """Cambio PIN deve essere rifiutato se il PIN corrente è errato."""
+    login_rv = client.post("/api/admin/login", json={"pin": "1234"})
+    token = login_rv.get_json()["admin_token"]
+
+    rv = client.post(
+        "/api/auth/pin/change",
+        json={"current_pin": "0000", "new_pin": "5678"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert rv.status_code == 401
+
+
+def test_pin_change_invalid_new_pin_non_numeric(client):
+    """Cambio PIN deve essere rifiutato se il nuovo PIN non è numerico."""
+    login_rv = client.post("/api/admin/login", json={"pin": "1234"})
+    token = login_rv.get_json()["admin_token"]
+
+    rv = client.post(
+        "/api/auth/pin/change",
+        json={"current_pin": "1234", "new_pin": "abcd"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert rv.status_code == 400
+    assert "error" in rv.get_json()
+
+
+def test_pin_change_invalid_new_pin_too_short(client):
+    """Cambio PIN deve essere rifiutato se il nuovo PIN è troppo corto."""
+    login_rv = client.post("/api/admin/login", json={"pin": "1234"})
+    token = login_rv.get_json()["admin_token"]
+
+    rv = client.post(
+        "/api/auth/pin/change",
+        json={"current_pin": "1234", "new_pin": "12"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert rv.status_code == 400
+
+
+def test_pin_change_invalid_new_pin_too_long(client):
+    """Cambio PIN deve essere rifiutato se il nuovo PIN è troppo lungo."""
+    login_rv = client.post("/api/admin/login", json={"pin": "1234"})
+    token = login_rv.get_json()["admin_token"]
+
+    rv = client.post(
+        "/api/auth/pin/change",
+        json={"current_pin": "1234", "new_pin": "123456789"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert rv.status_code == 400
+
+
+def test_pin_change_old_pin_no_longer_works(client):
+    """Dopo il cambio PIN il vecchio PIN non deve più funzionare."""
+    login_rv = client.post("/api/admin/login", json={"pin": "1234"})
+    token = login_rv.get_json()["admin_token"]
+
+    client.post(
+        "/api/auth/pin/change",
+        json={"current_pin": "1234", "new_pin": "5678"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    rv = client.post("/api/admin/login", json={"pin": "1234"})
+    assert rv.status_code == 401
+
+
+def test_pin_change_new_pin_works_after_change(client):
+    """Dopo il cambio PIN il nuovo PIN deve funzionare."""
+    login_rv = client.post("/api/admin/login", json={"pin": "1234"})
+    token = login_rv.get_json()["admin_token"]
+
+    client.post(
+        "/api/auth/pin/change",
+        json={"current_pin": "1234", "new_pin": "5678"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    rv = client.post("/api/admin/login", json={"pin": "5678"})
+    assert rv.status_code == 200
+    assert rv.get_json()["status"] == "ok"
+
+
+def test_pin_change_invalidates_token(client):
+    """Dopo il cambio PIN il vecchio token deve essere invalidato."""
+    login_rv = client.post("/api/admin/login", json={"pin": "1234"})
+    token = login_rv.get_json()["admin_token"]
+
+    client.post(
+        "/api/auth/pin/change",
+        json={"current_pin": "1234", "new_pin": "5678"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    rv = client.get("/api/auth/session", headers={"Authorization": f"Bearer {token}"})
+    assert rv.get_json()["token_authenticated"] is False
+
+
+# ─── test input malformati ────────────────────────────────────────────────────
+
+def test_login_invalid_json_returns_401(client):
+    """Login con body non JSON deve ritornare 401 (pin vuoto non valido)."""
+    rv = client.post(
+        "/api/admin/login",
+        data="not-json",
+        content_type="text/plain",
+    )
+    assert rv.status_code == 401
+
+
+def test_login_empty_body_returns_401(client):
+    """Login con body vuoto deve ritornare 401."""
+    rv = client.post("/api/admin/login", json={})
+    assert rv.status_code == 401
+
+
+def test_login_pin_format_non_numeric(client):
+    """Login con PIN non numerico deve ritornare 401."""
+    rv = client.post("/api/admin/login", json={"pin": "abcd"})
+    assert rv.status_code == 401
+
+
+def test_login_pin_format_too_short(client):
+    """Login con PIN troppo corto deve ritornare 401."""
+    rv = client.post("/api/admin/login", json={"pin": "12"})
+    assert rv.status_code == 401
+
+
+def test_login_pin_format_too_long(client):
+    """Login con PIN troppo lungo deve ritornare 401."""
+    rv = client.post("/api/admin/login", json={"pin": "123456789"})
+    assert rv.status_code == 401
+
+
+def test_login_pin_very_long_string(client):
+    """Login con stringa molto lunga deve essere rifiutato senza crash."""
+    rv = client.post("/api/admin/login", json={"pin": "1" * 10000})
+    assert rv.status_code == 401
+
+
+# ─── test persistenza locked_until ───────────────────────────────────────────
+
+def test_locked_until_persists_in_state(client):
+    """locked_until deve essere salvato nello stato dopo il blocco."""
+    from core.state import state
+
+    for _ in range(5):
+        client.post("/api/admin/login", json={"pin": "0000"})
+
+    auth = state.get("auth", {})
+    assert auth.get("locked_until", 0) > time.time(), \
+        "locked_until deve essere un timestamp futuro dopo il blocco"
+
+
+def test_locked_until_restored_blocks_login(client):
+    """Se locked_until è nel futuro nello stato, il login deve essere bloccato."""
+    from core.state import state
+    from api.auth import init_auth
+
+    # Forza il blocco direttamente nello stato
+    state["auth"] = {
+        "pin_hash": None,  # sarà reimpostato da init_auth se necessario
+        "admin_token": None,
+        "fails": 5,
+        "locked_until": int(time.time()) + 120,
+    }
+
+    rv = client.post("/api/admin/login", json={"pin": "1234"})
+    assert rv.status_code == 429
+    data = rv.get_json()
+    assert "retry_in" in data
+    assert data["retry_in"] > 0

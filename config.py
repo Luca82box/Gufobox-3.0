@@ -41,6 +41,7 @@ for p in FILE_MANAGER_ROOTS:
 
 # Autenticazione & API Keys
 SECRET_KEY = os.environ.get("GUFOBOX_SECRET_KEY", "change-me-in-production")
+ADMIN_DEFAULT_PIN = os.environ.get("GUFOBOX_ADMIN_PIN", "1234")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
 
 # Percorsi File JSON (Stato)

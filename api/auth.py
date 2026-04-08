@@ -18,7 +18,7 @@ from flask import Blueprint, request, jsonify, session
 from core.state import state, bus, save_json_direct
 from core.utils import log
 from core.event_log import log_event
-from config import STATE_FILE, SECRET_KEY
+from config import STATE_FILE, SECRET_KEY, ADMIN_DEFAULT_PIN
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -26,7 +26,8 @@ auth_bp = Blueprint("auth", __name__)
 _MAX_FAILS = 5          # tentativi errati prima del blocco
 _LOCKOUT_SECS = 60      # secondi di blocco
 _SESSION_TIMEOUT = 3600 # secondi di validità sessione Flask
-_DEFAULT_PIN = "1234"
+_DEFAULT_PIN = ADMIN_DEFAULT_PIN
+_SECRET_KEY_DEFAULT = "change-me-in-production"
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -54,7 +55,16 @@ def _auth_state() -> dict:
 
 
 def init_auth():
-    """Garantisce che lo stato di autenticazione sia inizializzato all'avvio."""
+    """Garantisce che lo stato di autenticazione sia inizializzato all'avvio.
+
+    Questa funzione è idempotente: può essere chiamata più volte senza effetti
+    collaterali (i valori esistenti non vengono sovrascritti). È intenzionalmente
+    invocata a livello di modulo per garantire che lo stato sia pronto prima che
+    arrivi la prima richiesta HTTP.
+    """
+    if SECRET_KEY == _SECRET_KEY_DEFAULT:
+        log("⚠️  ATTENZIONE: GUFOBOX_SECRET_KEY è ancora il valore di default "
+            "'change-me-in-production'. Impostare una chiave sicura in produzione!", "warning")
     if "auth" not in state:
         state["auth"] = _default_auth_state()
         bus.mark_dirty("state")
@@ -111,6 +121,10 @@ def api_admin_login():
 
     data = request.get_json(silent=True) or {}
     pin = str(data.get("pin", "")).strip()
+
+    # Validazione formato PIN: solo cifre, lunghezza 4-8
+    if not pin.isdigit() or not (4 <= len(pin) <= 8):
+        return jsonify({"error": "PIN non valido: solo cifre, da 4 a 8 caratteri"}), 401
 
     auth = _auth_state()
     expected_hash = auth.get("pin_hash") or _hash_pin(_DEFAULT_PIN)

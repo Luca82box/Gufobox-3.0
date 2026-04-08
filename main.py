@@ -48,6 +48,7 @@ from api.wizard import wizard_bp
 
 import os
 import signal
+import socket
 
 # Percorso alla build del frontend Vue (generata da `npm run build`)
 _FRONTEND_DIST = os.path.join(os.path.dirname(__file__), "frontend", "dist")
@@ -175,9 +176,32 @@ if __name__ == "__main__":
 
         # 4. Avvia il server web in ascolto su tutte le interfacce (0.0.0.0) sulla porta 5000
         log("Server pronto! In attesa di connessioni...", "info")
-        
+
+        # Controlla se la porta 5000 è già occupata prima di avviare il server
+        _port = 5000
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _probe:
+            if _probe.connect_ex(("127.0.0.1", _port)) == 0:
+                log(
+                    f"❌ ERRORE: La porta {_port} è già in uso! "
+                    f"Per liberarla esegui: sudo fuser -k {_port}/tcp "
+                    f"oppure: sudo lsof -ti :{_port} | xargs kill",
+                    "error",
+                )
+                try:
+                    import subprocess
+                    result = subprocess.run(
+                        ["fuser", f"{_port}/tcp"],
+                        capture_output=True, text=True, timeout=3
+                    )
+                    pids = result.stdout.strip()
+                    if pids:
+                        log(f"PID che occupa la porta {_port}: {pids}", "error")
+                except Exception:
+                    pass
+                raise OSError(f"[Errno 98] Address already in use: porta {_port} occupata")
+
         # Usiamo socketio.run invece di app.run per supportare i WebSocket con eventlet
-        socketio.run(app, host="0.0.0.0", port=5000, debug=False)
+        socketio.run(app, host="0.0.0.0", port=_port, debug=False)
         
     except KeyboardInterrupt:
         log("Spegnimento manuale rilevato. Chiusura servizi...", "warning")

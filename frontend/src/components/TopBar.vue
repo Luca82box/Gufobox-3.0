@@ -158,7 +158,7 @@ function handleAdminClick() {
 }
 
 .tb-logo__owl {
-  font-size: 1.5rem;
+  font-size: 2rem;
   line-height: 1;
 }
 
@@ -175,9 +175,9 @@ function handleAdminClick() {
   background: rgba(255,255,255,0.08);
   border: none;
   border-radius: 50%;
-  width: 42px;
-  height: 42px;
-  font-size: 1.25rem;
+  width: 52px;
+  height: 52px;
+  font-size: 1.6rem;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -262,7 +262,7 @@ function handleAdminClick() {
 
 @media (max-width: 400px) {
   .topbar { padding: 8px 10px; }
-  .tb-btn { width: 36px; height: 36px; font-size: 1.05rem; }
+  .tb-btn { width: 44px; height: 44px; font-size: 1.3rem; }
   .tb-logo__text { display: none; }
 }
 </style>

@@ -65,9 +65,9 @@ function initStarBackground(canvas) {
   const stars = Array.from({ length: NUM_STARS }, () => ({
     x: Math.random() * W,
     y: Math.random() * H,
-    r: Math.random() * 1.5 + 0.3,
+    r: Math.random() * 3 + 1,
     alpha: Math.random(),
-    dAlpha: (Math.random() * 0.008 + 0.002) * (Math.random() < 0.5 ? 1 : -1),
+    dAlpha: (Math.random() * 0.02 + 0.005) * (Math.random() < 0.5 ? 1 : -1),
   }))
 
   const comets = Array.from({ length: NUM_COMETS }, () => newComet(W, H))
@@ -117,10 +117,14 @@ function initStarBackground(canvas) {
       s.alpha += s.dAlpha
       if (s.alpha <= 0 || s.alpha >= 1) s.dAlpha *= -1
       s.alpha = Math.max(0.05, Math.min(1, s.alpha))
+      ctx.save()
+      ctx.shadowBlur = s.r * 4
+      ctx.shadowColor = `rgba(200, 220, 255, ${s.alpha * 0.6})`
       ctx.beginPath()
       ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2)
       ctx.fillStyle = `rgba(255,255,255,${s.alpha})`
       ctx.fill()
+      ctx.restore()
     }
 
     // Comete
@@ -234,7 +238,7 @@ onBeforeUnmount(() => {
 body {
   margin: 0;
   padding: 0;
-  background: linear-gradient(180deg, #0d0d2b 0%, #1a0a2e 50%, #2d1b4e 100%);
+  background: linear-gradient(180deg, #0c0c2d 0%, #1a1040 35%, #2d1854 65%, #3d2060 100%);
   background-attachment: fixed;
   color: var(--text-main);
   font-family: var(--font-family);

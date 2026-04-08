@@ -9,7 +9,7 @@ Implements:
 
 import hashlib
 import hmac
-import os
+import re
 import secrets
 import time
 
@@ -18,7 +18,7 @@ from flask import Blueprint, request, jsonify, session
 from core.state import state, bus, save_json_direct
 from core.utils import log
 from core.event_log import log_event
-from config import STATE_FILE
+from config import STATE_FILE, SECRET_KEY
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -40,8 +40,8 @@ def _default_auth_state():
 
 
 def _hash_pin(pin: str) -> str:
-    """SHA-256 del PIN con salt fisso basato su SECRET_KEY."""
-    salt = os.environ.get("GUFOBOX_SECRET_KEY", "change-me-in-production").encode()
+    """SHA-256 del PIN con salt basato su SECRET_KEY."""
+    salt = SECRET_KEY.encode()
     return hashlib.sha256(salt + pin.encode()).hexdigest()
 
 
@@ -51,6 +51,28 @@ def _auth_state() -> dict:
         state["auth"] = _default_auth_state()
         bus.mark_dirty("state")
     return state["auth"]
+
+
+def init_auth():
+    """Garantisce che lo stato di autenticazione sia inizializzato all'avvio."""
+    if "auth" not in state:
+        state["auth"] = _default_auth_state()
+        bus.mark_dirty("state")
+    auth = state["auth"]
+    # Garantisci che tutte le chiavi necessarie esistano
+    defaults = _default_auth_state()
+    for key, default_val in defaults.items():
+        if key not in auth:
+            auth[key] = default_val
+    # Se il pin_hash non è un hex valido di 64 caratteri, reimpostalo al default
+    pin_hash = auth.get("pin_hash", "")
+    if not (isinstance(pin_hash, str) and re.fullmatch(r"[0-9a-f]{64}", pin_hash)):
+        auth["pin_hash"] = _hash_pin(_DEFAULT_PIN)
+        bus.mark_dirty("state")
+
+
+# Inizializza subito all'import
+init_auth()
 
 
 def _is_locked() -> bool:

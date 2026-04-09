@@ -68,6 +68,16 @@
           <span class="nav-label">Audio</span>
         </button>
 
+        <button @click="currentTab = 'alarm'" :class="{ active: currentTab === 'alarm' }">
+          <span class="nav-icon">⏰</span>
+          <span class="nav-label">Sveglia</span>
+        </button>
+
+        <button @click="currentTab = 'datetime'" :class="{ active: currentTab === 'datetime' }">
+          <span class="nav-icon">🕐</span>
+          <span class="nav-label">Data/Ora</span>
+        </button>
+
         <button @click="currentTab = 'system'" :class="{ active: currentTab === 'system' }">
           <span class="nav-icon">⚙️</span>
           <span class="nav-label">Sistema</span>
@@ -119,6 +129,10 @@
 
           <AdminAudio v-if="currentTab === 'audio'" />
 
+          <AdminAlarm v-if="currentTab === 'alarm'" />
+
+          <AdminDateTime v-if="currentTab === 'datetime'" />
+
           <AdminSystem v-if="currentTab === 'system'" />
 
           <AdminDiagnostics v-if="currentTab === 'diag'" />
@@ -147,6 +161,8 @@ import AdminBluetooth from './admin/AdminBluetooth.vue'
 import AdminAudio from './admin/AdminAudio.vue'
 import AdminRfid from './admin/AdminRfid.vue'
 import AdminLed from './admin/AdminLed.vue'
+import AdminAlarm from './admin/AdminAlarm.vue'
+import AdminDateTime from './admin/AdminDateTime.vue'
 import AdminSystem from './admin/AdminSystem.vue'
 import AdminDiagnostics from './admin/AdminDiagnostics.vue'
 

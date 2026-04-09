@@ -24,6 +24,7 @@ Installing Piper on Raspberry Pi:
 
 import hashlib
 import os
+import re
 import subprocess
 
 from flask import Blueprint, request, jsonify, send_file
@@ -49,6 +50,11 @@ _DEFAULT_PIPER_SETTINGS = {
     "fallback_policy": "auto",    # "prefer_online" | "auto" | "offline_only"
     "cache_enabled": True,
 }
+
+# Allowed characters in voice names (prevent path traversal / injection)
+_VOICE_NAME_RE = re.compile(r'^[a-zA-Z0-9_\-]+$')
+# Maximum length for sanitized error messages returned to clients
+_MAX_ERR_LEN = 120
 
 piper_settings = load_json(PIPER_SETTINGS_FILE, _DEFAULT_PIPER_SETTINGS)
 
@@ -107,19 +113,36 @@ def _piper_cache_stats():
         return {"files": 0, "bytes": 0}
 
 
+def _validate_voice_name(voice):
+    """Raise ValueError if voice name contains unsafe characters."""
+    if not voice or not _VOICE_NAME_RE.match(voice):
+        raise ValueError("Nome voce non valido (solo lettere, cifre, trattini e underscore)")
+
+
+def _safe_error(exc):
+    """Return a brief, sanitized error message safe for client responses."""
+    return str(exc)[:_MAX_ERR_LEN]
+
+
 def synthesize_with_piper(text, voice=""):
     """Synthesize text with local Piper. Returns path to WAV file.
 
-    Raises RuntimeError on failure.
+    Raises RuntimeError on failure, ValueError on invalid input.
     """
     if not voice:
         voice = piper_settings.get("offline_voice", "")
     if not voice:
         raise RuntimeError("Nessuna voce offline configurata")
 
+    _validate_voice_name(voice)
+
+    # Build paths using only the validated voice name — no user input reaches os.path.join
     model_path = os.path.join(PIPER_VOICES_DIR, f"{voice}.onnx")
+    # Confirm the resolved path is still inside PIPER_VOICES_DIR (defense-in-depth)
+    if not os.path.realpath(model_path).startswith(os.path.realpath(PIPER_VOICES_DIR)):
+        raise ValueError("Percorso modello voce non valido")
     if not os.path.isfile(model_path):
-        raise RuntimeError(f"Modello voce non trovato: {model_path}")
+        raise RuntimeError("Modello voce non trovato")
 
     cache_enabled = piper_settings.get("cache_enabled", True)
     cache_key = _piper_cache_key(text, voice)
@@ -142,7 +165,7 @@ def synthesize_with_piper(text, voice=""):
             timeout=30,
         )
         if proc.returncode != 0:
-            err = proc.stderr.decode("utf-8", errors="replace")[:300]
+            err = proc.stderr.decode("utf-8", errors="replace")[:_MAX_ERR_LEN]
             raise RuntimeError(f"Piper exit {proc.returncode}: {err}")
         log(f"Piper TTS: '{text[:40]}' -> {out_path}", "info")
         return out_path
@@ -156,7 +179,7 @@ def synthesize_text(text, openai_client=None, openai_voice="nova"):
     Returns dict with:
         provider  : "openai" | "piper" | "none"
         audio_url : str | None
-        error     : str | None
+        error     : str | None  (sanitized, safe to return to client)
     """
     policy = piper_settings.get("fallback_policy", "auto")
     offline_enabled = piper_settings.get("offline_enabled", False)
@@ -181,7 +204,7 @@ def synthesize_text(text, openai_client=None, openai_voice="nova"):
         except Exception as e:
             log(f"OpenAI TTS failed ({e}), trying Piper offline", "warning")
             if not offline_enabled:
-                return {"provider": "none", "audio_url": None, "error": str(e)}
+                return {"provider": "none", "audio_url": None, "error": "Servizio TTS online non disponibile"}
 
     # Piper fallback
     if not offline_enabled and policy == "auto":
@@ -197,7 +220,7 @@ def synthesize_text(text, openai_client=None, openai_voice="nova"):
         }
     except Exception as e:
         log(f"Piper TTS failed: {e}", "error")
-        return {"provider": "none", "audio_url": None, "error": str(e)}
+        return {"provider": "none", "audio_url": None, "error": "Sintesi vocale offline non riuscita"}
 
 
 # =========================================================
@@ -235,7 +258,18 @@ def api_tts_offline_settings_post():
     data = request.get_json(silent=True) or {}
     allowed = {"offline_enabled", "offline_voice", "fallback_policy", "cache_enabled"}
     for k in allowed:
-        if k in data:
+        if k not in data:
+            continue
+        if k == "offline_voice":
+            voice = str(data[k]).strip()
+            if voice and not _VOICE_NAME_RE.match(voice):
+                return jsonify({"error": "Nome voce non valido"}), 400
+            piper_settings[k] = voice
+        elif k == "fallback_policy":
+            if data[k] not in ("prefer_online", "auto", "offline_only"):
+                return jsonify({"error": "Politica di fallback non valida"}), 400
+            piper_settings[k] = data[k]
+        else:
             piper_settings[k] = data[k]
     _save_piper_settings()
     log("Impostazioni voce offline aggiornate", "info")
@@ -260,16 +294,25 @@ def api_tts_offline_test():
             "audio_url": f"/api/tts/offline/audio/{fname}",
             "voice": voice,
         })
-    except Exception as e:
+    except (ValueError, RuntimeError) as e:
         log(f"Piper test failed: {e}", "error")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": _safe_error(e)}), 500
+    except Exception as e:
+        log(f"Piper test unexpected error: {e}", "error")
+        return jsonify({"error": "Errore interno sintesi vocale"}), 500
 
 
 @tts_bp.route("/tts/offline/audio/<filename>", methods=["GET"])
 def api_tts_offline_serve(filename):
     """Serve a WAV file from the Piper cache."""
+    # Accept only hex-named cache files (32-char MD5 + .wav)
     safe_name = os.path.basename(filename)
+    if not re.fullmatch(r'[0-9a-f]{32}\.wav', safe_name):
+        return jsonify({"error": "File non trovato"}), 404
     file_path = os.path.join(PIPER_TTS_CACHE_DIR, safe_name)
+    # Confirm resolved path is inside cache dir (defense-in-depth)
+    if not os.path.realpath(file_path).startswith(os.path.realpath(PIPER_TTS_CACHE_DIR)):
+        return jsonify({"error": "File non trovato"}), 404
     if not os.path.isfile(file_path):
         return jsonify({"error": "File non trovato"}), 404
     return send_file(file_path, mimetype="audio/wav")

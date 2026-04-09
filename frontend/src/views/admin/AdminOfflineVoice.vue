@@ -252,7 +252,7 @@ async function testVoice() {
       text: testText.value || 'Ciao! Sono il Gufetto Magico.',
       voice: settings.offline_voice,
     }))
-    testAudioUrl.value = `/api${data.audio_url}`
+    testAudioUrl.value = data.audio_url
   } catch (e) {
     showError(extractApiError(e, 'Test voce fallito'))
   } finally {

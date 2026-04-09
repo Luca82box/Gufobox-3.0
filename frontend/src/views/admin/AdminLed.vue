@@ -188,7 +188,10 @@ const masterOverrideActive = ref(false)
 
 // iro.js color picker instance
 let iroColorPicker = null
-let _iroUpdating = false  // guard against feedback loops between picker and v-model
+let iroSyncInProgress = false  // guard against feedback loops between picker and v-model
+
+// Regex for validating 6-digit hex colors
+const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/
 
 const previewStyle = computed(() => ({
   background: masterSettings.color,
@@ -228,7 +231,7 @@ function initColorWheel() {
     ],
   })
   iroColorPicker.on('color:change', (color) => {
-    if (_iroUpdating) return
+    if (iroSyncInProgress) return
     masterSettings.color = color.hexString
   })
 }
@@ -236,20 +239,20 @@ function initColorWheel() {
 // Sync picker when color is changed via hex text input
 function onHexInputChange() {
   const val = masterSettings.color
-  if (/^#[0-9a-fA-F]{6}$/.test(val) && iroColorPicker) {
-    _iroUpdating = true
+  if (HEX_COLOR_RE.test(val) && iroColorPicker) {
+    iroSyncInProgress = true
     iroColorPicker.color.hexString = val
-    _iroUpdating = false
+    iroSyncInProgress = false
   }
 }
 
 // Sync picker when master settings are loaded from backend
 watch(() => masterSettings.color, (newColor) => {
-  if (_iroUpdating || !iroColorPicker) return
-  if (/^#[0-9a-fA-F]{6}$/.test(newColor)) {
-    _iroUpdating = true
+  if (iroSyncInProgress || !iroColorPicker) return
+  if (HEX_COLOR_RE.test(newColor)) {
+    iroSyncInProgress = true
     iroColorPicker.color.hexString = newColor
-    _iroUpdating = false
+    iroSyncInProgress = false
   }
 })
 

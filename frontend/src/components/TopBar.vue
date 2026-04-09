@@ -54,13 +54,24 @@
         {{ batteryIcon }}<span class="tb-battery__pct">{{ batteryPercent != null ? batteryPercent + '%' : '—%' }}</span>
       </div>
 
+      <!-- 🕐 Orologio + Data -->
+      <div class="tb-clock" title="Data e ora corrente">
+        <span class="tb-clock__time">{{ currentTime }}</span>
+        <span class="tb-clock__date">{{ currentDate }}</span>
+      </div>
+
+      <!-- ⏻ Spegni -->
+      <button class="tb-btn tb-btn--power" @click="handleShutdown" title="Spegni GufoBox">
+        ⏻
+      </button>
+
     </div>
 
   </header>
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useApi } from '../composables/useApi'
 import { useAuth } from '../composables/useAuth'
 
@@ -100,7 +111,7 @@ async function toggleNightMode() {
     nightMode.value = !nightMode.value
     await guardedCall(() => api.post('/system/night_mode', { enabled: nightMode.value }))
   } catch (_) {
-    nightMode.value = !nightMode.value // rollback on error
+    nightMode.value = !nightMode.value
   }
 }
 
@@ -119,6 +130,26 @@ const batteryClass = computed(() => {
   return ''
 })
 
+// ── Orologio Live ──────────────────────────────────────────────────────────
+const currentTime = ref('')
+const currentDate = ref('')
+let _clockInterval = null
+
+function updateClock() {
+  const now = new Date()
+  currentTime.value = now.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  currentDate.value = now.toLocaleDateString('it-IT', { weekday: 'short', day: '2-digit', month: '2-digit' })
+}
+
+// ── Spegnimento ────────────────────────────────────────────────────────────
+async function handleShutdown() {
+  if (!confirm('Vuoi davvero spegnere la GufoBox?')) return
+  try {
+    const api = getApi()
+    await guardedCall(() => api.post('/system', { azione: 'shutdown' }))
+  } catch (_) {}
+}
+
 // ── Navigazione ────────────────────────────────────────────────────────────
 const emit = defineEmits(['go-home'])
 
@@ -129,6 +160,15 @@ function goHome() {
 function handleAdminClick() {
   goAdmin(offline.value)
 }
+
+onMounted(() => {
+  updateClock()
+  _clockInterval = setInterval(updateClock, 1000)
+})
+
+onUnmounted(() => {
+  if (_clockInterval) clearInterval(_clockInterval)
+})
 </script>
 
 <style scoped>
@@ -157,10 +197,7 @@ function handleAdminClick() {
   line-height: 1;
 }
 
-.tb-logo__owl {
-  font-size: 2rem;
-  line-height: 1;
-}
+.tb-logo__owl { font-size: 2rem; line-height: 1; }
 
 .tb-logo__text {
   font-size: 0.75rem;
@@ -228,6 +265,19 @@ function handleAdminClick() {
   box-shadow: 0 0 12px rgba(255,136,51,0.5);
 }
 
+/* ── Power button ─────────────────────────────────────────── */
+.tb-btn--power {
+  background: rgba(255,77,77,0.12);
+  border: 1.5px solid rgba(255,77,77,0.35);
+  color: #ff6b6b;
+}
+
+.tb-btn--power:hover {
+  background: rgba(255,77,77,0.28);
+  border-color: #ff4d4d;
+  box-shadow: 0 0 10px rgba(255,77,77,0.35);
+}
+
 /* ── Azioni destra ────────────────────────────────────────── */
 .tb-actions {
   display: flex;
@@ -245,10 +295,7 @@ function handleAdminClick() {
   white-space: nowrap;
 }
 
-.tb-battery__pct {
-  font-size: 0.72rem;
-  font-weight: 600;
-}
+.tb-battery__pct { font-size: 0.72rem; font-weight: 600; }
 
 .battery-low {
   color: #ff8a80;
@@ -260,10 +307,36 @@ function handleAdminClick() {
   50% { opacity: 0.4; }
 }
 
-@media (max-width: 400px) {
-  .topbar { padding: 8px 10px; }
+/* ── Orologio live ────────────────────────────────────────── */
+.tb-clock {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.2;
+  color: rgba(255,255,255,0.9);
+  min-width: 68px;
+}
+
+.tb-clock__time {
+  font-size: 0.9rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.3px;
+}
+
+.tb-clock__date {
+  font-size: 0.68rem;
+  color: rgba(255,255,255,0.5);
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+@media (max-width: 520px) {
+  .topbar { padding: 8px 8px; gap: 5px; }
   .tb-btn { width: 44px; height: 44px; font-size: 1.3rem; }
   .tb-logo__text { display: none; }
+  .tb-clock__date { display: none; }
+  .tb-battery__pct { display: none; }
 }
 </style>
 

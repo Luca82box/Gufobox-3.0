@@ -79,6 +79,16 @@
     <div class="card">
       <h3>Aggiornamento OTA ⬆️</h3>
 
+      <!-- Descrizione cosa include l'aggiornamento -->
+      <div class="ota-info-box">
+        <strong>Cosa comprende l'aggiornamento?</strong>
+        <ul class="ota-includes-list">
+          <li>📦 <strong>Aggiorna App</strong> — scarica l'ultima versione del codice backend Python e frontend Vue da GitHub (git pull), reinstalla le dipendenze Python e ricompila il frontend</li>
+          <li>🛡️ <strong>Aggiorna Sistema</strong> — aggiorna i pacchetti di sistema Raspberry Pi/Debian tramite apt-get (sicuro, non riavvia automaticamente)</li>
+        </ul>
+        <p class="ota-tip">💡 Viene creato un backup automatico prima di ogni aggiornamento. Puoi ripristinare dalla sezione Backup se qualcosa va storto.</p>
+      </div>
+
       <div class="ota-status-bar" :class="otaStatus.status">
         <span>Stato: <strong>{{ otaStatusLabel }}</strong></span>
         <span v-if="otaStatus.mode"> — Modalità: {{ otaStatus.mode }}</span>
@@ -87,10 +97,13 @@
 
       <!-- Progress bar shown while running -->
       <div v-if="otaRunning" class="ota-progress">
-        <div class="progress-bar">
-          <div class="progress-fill" :style="{ width: (otaStatus.progress_percent || 0) + '%' }"></div>
+        <div class="ota-progress-bar">
+          <div class="ota-progress-fill" :style="{ width: (otaStatus.progress_percent || 0) + '%' }"></div>
         </div>
-        <p class="progress-desc">{{ otaStatus.description || 'Aggiornamento in corso...' }}</p>
+        <div class="ota-progress-info">
+          <span class="ota-progress-pct">{{ otaStatus.progress_percent || 0 }}%</span>
+          <span class="progress-desc">{{ otaStatus.description || 'Aggiornamento in corso...' }}</span>
+        </div>
       </div>
 
       <!-- Last error if any -->
@@ -127,7 +140,7 @@
     <!-- OTA da file -->
     <div class="card">
       <h3>Aggiornamento da File 📁</h3>
-      <p class="card-desc">Carica un package <code>.zip</code> o <code>.tar.gz</code> per aggiornare l'app manualmente.</p>
+      <p class="card-desc">Carica un package <code>.zip</code> o <code>.tar.gz</code> per aggiornare l'app manualmente. Il processo: validazione archivio → backup automatico → copia file.</p>
 
       <!-- Upload area -->
       <div class="file-upload-area">
@@ -178,10 +191,13 @@
 
       <!-- In-progress for file OTA -->
       <div v-if="otaRunning && otaStatus.mode === 'file'" class="ota-progress">
-        <div class="progress-bar">
-          <div class="progress-fill" :style="{ width: (otaStatus.progress_percent || 0) + '%' }"></div>
+        <div class="ota-progress-bar">
+          <div class="ota-progress-fill" :style="{ width: (otaStatus.progress_percent || 0) + '%' }"></div>
         </div>
-        <p class="progress-desc">{{ otaStatus.description || 'Apply in corso...' }}</p>
+        <div class="ota-progress-info">
+          <span class="ota-progress-pct">{{ otaStatus.progress_percent || 0 }}%</span>
+          <span class="progress-desc">{{ otaStatus.description || 'Apply in corso...' }}</span>
+        </div>
       </div>
 
       <!-- File OTA result -->
@@ -654,10 +670,74 @@ onUnmounted(() => {
 .ota-status-bar.done { border-left-color: #4caf50; }
 .ota-status-bar.error { border-left-color: #e53935; }
 
+/* OTA info description box */
+.ota-info-box {
+  background: rgba(63,81,181,0.1);
+  border: 1px solid rgba(63,81,181,0.3);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  font-size: 0.88rem;
+  color: #bbb;
+}
+
+.ota-info-box strong {
+  color: #fff;
+  display: block;
+  margin-bottom: 8px;
+  font-size: 0.93rem;
+}
+
+.ota-includes-list {
+  margin: 0 0 8px 0;
+  padding-left: 6px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ota-includes-list li { color: #bbb; font-size: 0.84rem; line-height: 1.4; }
+
+.ota-tip { margin: 8px 0 0; color: #888; font-size: 0.82rem; font-style: italic; }
+
 .ota-progress {
   margin-bottom: 15px;
 }
 
+/* New improved progress bar */
+.ota-progress-bar {
+  background: #1a1a2e;
+  border: 1px solid #3a3a50;
+  border-radius: 8px;
+  height: 13px;
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+
+.ota-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #3f51b5 0%, #ff9800 100%);
+  border-radius: 8px;
+  transition: width 0.6s ease;
+  box-shadow: 0 0 8px rgba(255,152,0,0.35);
+}
+
+.ota-progress-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ota-progress-pct {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #ffd27b;
+  min-width: 36px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Keep legacy classes */
 .progress-bar {
   background: #1e1e26;
   border-radius: 6px;

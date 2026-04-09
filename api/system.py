@@ -892,3 +892,89 @@ def api_standby_status():
         "in_standby": is_in_standby(),
         "standby_state": get_standby_state(),
     })
+
+
+# =========================================================
+# DATA/ORA E TIMEZONE
+# =========================================================
+
+def _get_current_timezone():
+    """Legge il timezone corrente del sistema."""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["timedatectl", "show", "--property=Timezone", "--value"],
+            capture_output=True, text=True, timeout=5
+        )
+        tz = result.stdout.strip()
+        if tz:
+            return tz
+    except Exception:
+        pass
+    try:
+        with open("/etc/timezone", "r") as f:
+            return f.read().strip()
+    except Exception:
+        pass
+    return "UTC"
+
+
+def _get_ntp_status():
+    """Restituisce lo stato del servizio NTP."""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["timedatectl", "show", "--property=NTPSynchronized", "--value"],
+            capture_output=True, text=True, timeout=5
+        )
+        synced = result.stdout.strip().lower() in ("yes", "true", "1")
+        return {"enabled": True, "synchronized": synced}
+    except Exception:
+        return {"enabled": False, "synchronized": False}
+
+
+@system_bp.route("/system/datetime", methods=["GET"])
+def api_datetime_status():
+    """Restituisce data/ora corrente, timezone e stato NTP del dispositivo."""
+    now = datetime.now()
+    return jsonify({
+        "iso": now.isoformat(),
+        "date": now.strftime("%Y-%m-%d"),
+        "time": now.strftime("%H:%M:%S"),
+        "timestamp": int(now.timestamp()),
+        "timezone": _get_current_timezone(),
+        "ntp": _get_ntp_status(),
+    })
+
+
+@system_bp.route("/system/timezone", methods=["POST"])
+def api_set_timezone():
+    """Imposta il timezone di sistema (richiede sudo timedatectl)."""
+    import re
+    data = request.get_json(silent=True) or {}
+    tz = str(data.get("timezone", "")).strip()
+    if not tz:
+        return jsonify({"error": "Campo 'timezone' obbligatorio"}), 400
+    if not re.match(r'^[A-Za-z0-9_/+-]{1,64}$', tz):
+        return jsonify({"error": "Timezone non valido"}), 400
+    code, out, err = run_cmd(["sudo", "timedatectl", "set-timezone", tz])
+    if code != 0:
+        log(f"Errore impostazione timezone '{tz}': {err}", "warning")
+        return jsonify({"error": "Impossibile impostare il timezone. Verificare che il timezone sia valido."}), 500
+    log(f"Timezone impostato: {tz}", "info")
+    log_event("system", "info", f"Timezone impostato: {tz}", {"timezone": tz})
+    return jsonify({"status": "ok", "timezone": tz})
+
+
+@system_bp.route("/system/ntp/sync", methods=["POST"])
+def api_ntp_sync():
+    """Forza sincronizzazione NTP."""
+    code, out, err = run_cmd(["sudo", "timedatectl", "set-ntp", "true"])
+    if code != 0:
+        log(f"Errore abilitazione NTP: {err}", "warning")
+        return jsonify({"error": "Impossibile abilitare NTP. Verificare i permessi sudo."}), 500
+    # best-effort immediate sync via chronyc; log failure but don't block the response
+    c_code, _, c_err = run_cmd(["sudo", "chronyc", "makestep"])
+    if c_code != 0:
+        log(f"chronyc makestep non disponibile: {c_err}", "info")
+    return jsonify({"status": "ok", "message": "Sincronizzazione NTP avviata"})

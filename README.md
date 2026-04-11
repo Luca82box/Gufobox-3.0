@@ -115,6 +115,47 @@ Alcune funzioni richiedono hardware fisico e permessi specifici:
 
 ---
 
+## Ottimizzazione Raspberry Pi: tmpfs per log e upload temporanei
+
+Per ridurre le scritture sulla microSD e migliorare le prestazioni, si consiglia di montare in RAM (tmpfs) le directory dei log e degli upload temporanei.
+
+### Configurazione automatica
+
+Esegui lo script incluso nel repository (richiede sudo):
+
+```bash
+bash scripts/setup-raspberry-tmpfs.sh
+```
+
+Lo script crea le directory, fa un backup di `/etc/fstab` e aggiunge i mount tmpfs rilevando automaticamente uid/gid dell'utente `gufobox`.
+
+### Configurazione manuale
+
+```bash
+# Verifica uid/gid dell'utente gufobox
+id gufobox
+
+# Crea le directory (se non esistono già)
+mkdir -p /home/gufobox/data/logs
+mkdir -p /home/gufobox/data/tmp_uploads
+
+# Backup di fstab
+sudo cp /etc/fstab /etc/fstab.backup
+
+# Aggiungi i mount tmpfs (sostituisci uid/gid con i valori reali)
+echo 'tmpfs /home/gufobox/data/logs        tmpfs defaults,noatime,nosuid,size=32m,uid=1000,gid=1000,mode=0755 0 0' | sudo tee -a /etc/fstab
+echo 'tmpfs /home/gufobox/data/tmp_uploads tmpfs defaults,noatime,nosuid,size=64m,uid=1000,gid=1000,mode=0755 0 0' | sudo tee -a /etc/fstab
+
+# Monta senza riavviare
+sudo mount -a
+```
+
+> **Note:**
+> - I dati in tmpfs vengono persi al riavvio: adatto per log e file temporanei, non per dati persistenti.
+> - Adatta `size=32m` / `size=64m` in base alla RAM disponibile.
+
+---
+
 ## Struttura del progetto
 
 ```

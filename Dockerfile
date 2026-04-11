@@ -24,10 +24,18 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
-# Installa le dipendenze Python
-COPY requirements.txt requirements-hw.txt ./
-RUN pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir -r requirements-hw.txt || true
+# Installa le dipendenze Python.
+# gcc e python3-dev sono necessari per pacchetti con estensioni C (es. cryptography).
+# requirements-hw.txt è opzionale (solo Raspberry Pi): il controllo [ ! -f … ] evita
+# errori di build quando il file è assente (es. build CI su x86).
+COPY requirements*.txt ./
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gcc python3-dev \
+    && pip install --no-cache-dir -r requirements.txt \
+    && [ ! -f requirements-hw.txt ] || pip install --no-cache-dir -r requirements-hw.txt \
+    && apt-get purge -y gcc python3-dev \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copia il backend
 COPY . .

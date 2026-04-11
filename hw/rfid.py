@@ -51,17 +51,21 @@ def _rfid_worker():
 
     while not is_shutdown_requested():
         try:
-            # reader.read() è bloccante, ma legge velocemente. 
-            # Potremmo usare read_no_block() se serve più reattività.
-            id, text = reader.read()
+            # read_no_block() ritorna (None, None) quando non c'è nessuna scheda,
+            # evitando di bloccare il thread eventlet indefinitamente come farebbe read().
+            id, text = reader.read_no_block()
+            if id is None:
+                eventlet.sleep(0.1)
+                continue
+
             uid_str = str(id)
 
             now = time.time()
-            
+
             # Debounce: evitiamo di sparare l'avvio 100 volte se la statuina resta appoggiata
             if uid_str != last_uid or (now - last_read_time) > 3:
                 log(f"Statuina FISICA rilevata! UID: {uid_str}", "info")
-                
+
                 # Prima prova la chiamata Python diretta, poi fallback HTTP
                 success = False
                 try:
@@ -76,9 +80,9 @@ def _rfid_worker():
 
         except Exception as e:
             log(f"Errore lettura RC522: {e}", "warning")
-        
-        # Pausa per non impallare la CPU (il thread eventlet)
-        eventlet.sleep(0.5)
+
+        # Pausa cooperativa per cedere il controllo all'hub eventlet
+        eventlet.sleep(0.1)
 
     log("Worker RFID terminato (shutdown richiesto).", "info")
 

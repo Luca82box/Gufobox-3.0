@@ -135,6 +135,8 @@ def _led_worker():
                 for i in range(0, strip.numPixels(), 3):
                     if i + q < strip.numPixels():
                         strip.setPixelColor(i + q, Color(0, 0, 0))
+            # Yield dopo il clear così l'hub eventlet rimane reattivo
+            eventlet.sleep(0.01)
 
         elif effect == "bounce":
             pos = step % (strip.numPixels() * 2 - 2)

@@ -28,6 +28,7 @@ import re
 import subprocess
 
 from flask import Blueprint, request, jsonify, send_file
+from werkzeug.utils import secure_filename
 
 from config import (
     AI_TTS_CACHE_DIR,
@@ -55,6 +56,11 @@ _DEFAULT_PIPER_SETTINGS = {
 _VOICE_NAME_RE = re.compile(r'^[a-zA-Z0-9_\-]+$')
 # Maximum length for sanitized error messages returned to clients
 _MAX_ERR_LEN = 120
+# Allowed Piper voice file extensions
+_PIPER_ALLOWED_EXTENSIONS = {".onnx", ".onnx.json"}
+# Maximum upload size for a single Piper voice file (50 MB)
+_PIPER_MAX_UPLOAD_MB = 50
+_PIPER_MAX_UPLOAD_BYTES = _PIPER_MAX_UPLOAD_MB * 1024 * 1024
 
 piper_settings = load_json(PIPER_SETTINGS_FILE, _DEFAULT_PIPER_SETTINGS)
 
@@ -164,6 +170,38 @@ def _resolve_cache_wav_path(filename):
 def _safe_error(exc):
     """Return a brief, sanitized error message safe for client responses."""
     return str(exc)[:_MAX_ERR_LEN]
+
+
+def _validate_piper_upload_filename(filename: str) -> str:
+    """Validate and sanitize a Piper voice upload filename.
+
+    Accepts only ``<name>.onnx`` and ``<name>.onnx.json`` where ``<name>``
+    matches ``_VOICE_NAME_RE`` (letters, digits, hyphens, underscores).
+
+    Returns the sanitized filename on success.
+    Raises ValueError with a human-readable message on failure.
+    """
+    safe = secure_filename(filename)
+    if not safe:
+        raise ValueError("Nome file non valido")
+
+    if safe.endswith(".onnx.json"):
+        stem = safe[: -len(".onnx.json")]
+        ext = ".onnx.json"
+    elif safe.endswith(".onnx"):
+        stem = safe[: -len(".onnx")]
+        ext = ".onnx"
+    else:
+        raise ValueError(
+            "Estensione non consentita. Sono accettati solo file .onnx e .onnx.json"
+        )
+
+    if not _VOICE_NAME_RE.match(stem):
+        raise ValueError(
+            "Nome voce non valido: usa solo lettere, cifre, trattini e underscore"
+        )
+
+    return stem + ext
 
 
 def synthesize_with_piper(text, voice=""):
@@ -371,4 +409,49 @@ def api_tts_synthesize():
         "status": "ok",
         "provider": result["provider"],
         "audio_url": result["audio_url"],
+    })
+
+
+@tts_bp.route("/tts/offline/upload", methods=["POST"])
+def api_tts_offline_upload():
+    """Upload a Piper voice model file (.onnx or .onnx.json) to PIPER_VOICES_DIR.
+
+    Accepts multipart/form-data with a single field named ``file``.
+    Only ``.onnx`` and ``.onnx.json`` files are accepted.
+    Filenames are sanitized to prevent path traversal.
+    Returns the refreshed list of available voices on success.
+    """
+    if "file" not in request.files:
+        return jsonify({"error": "Nessun file nella richiesta"}), 400
+
+    upload = request.files["file"]
+    if not upload or not upload.filename:
+        return jsonify({"error": "File non valido"}), 400
+
+    try:
+        safe_name = _validate_piper_upload_filename(upload.filename)
+    except ValueError as exc:
+        # Return only the human-readable validation message (no stack trace)
+        return jsonify({"error": str(exc)[:_MAX_ERR_LEN]}), 400
+
+    # Guard against oversized uploads
+    upload.seek(0, 2)
+    file_size = upload.tell()
+    upload.seek(0)
+    if file_size > _PIPER_MAX_UPLOAD_BYTES:
+        return jsonify({"error": f"File troppo grande (max {_PIPER_MAX_UPLOAD_MB} MB)"}), 413
+
+    dest_path = os.path.join(PIPER_VOICES_DIR, safe_name)
+    try:
+        os.makedirs(PIPER_VOICES_DIR, exist_ok=True)
+        upload.save(dest_path)
+    except OSError as exc:
+        log(f"Piper upload error: {exc}", "error")
+        return jsonify({"error": "Errore durante il salvataggio del file"}), 500
+
+    log(f"Piper voice file caricato: {safe_name}", "info")
+    return jsonify({
+        "status": "ok",
+        "filename": safe_name,
+        "voices": _list_voices(),
     })

@@ -87,6 +87,18 @@ Vedi `.env.example` per la lista completa.
 
 Alcune funzioni richiedono hardware fisico e permessi specifici:
 
+- **GPIO driver (lgpio)**: richiesto da `gpiozero` per accesso ai pin GPIO
+  ```bash
+  sudo apt install -y python3-lgpio
+  ```
+- **I2C (smbus2)**: richiesto da `hw/battery.py` per il fuel gauge MAX17048
+  ```bash
+  pip install smbus2
+  ```
+  oppure installa le dipendenze hardware complete con:
+  ```bash
+  pip install -r requirements-hw.txt || true
+  ```
 - **GPIO** (pulsanti, LED, amplificatore): assicurati che l'utente sia nel gruppo `gpio`
   ```bash
   sudo usermod -aG gpio $USER

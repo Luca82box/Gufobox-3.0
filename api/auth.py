@@ -47,8 +47,8 @@ def _hash_pin(pin: str) -> str:
 
 
 def _auth_state() -> dict:
-    """Ritorna il sotto-dict di autenticazione dallo stato globale (lo crea se assente)."""
-    if "auth" not in state:
+    """Ritorna il sotto-dict di autenticazione dallo stato globale (lo crea se assente o nullo)."""
+    if not isinstance(state.get("auth"), dict):
         state["auth"] = _default_auth_state()
         bus.mark_dirty("state")
     return state["auth"]
@@ -61,11 +61,14 @@ def init_auth():
     collaterali (i valori esistenti non vengono sovrascritti). È intenzionalmente
     invocata a livello di modulo per garantire che lo stato sia pronto prima che
     arrivi la prima richiesta HTTP.
+
+    Gestisce in modo robusto lo stato persistito malformato o con "auth": null.
     """
     if SECRET_KEY == _SECRET_KEY_DEFAULT:
         log("⚠️  ATTENZIONE: GUFOBOX_SECRET_KEY è ancora il valore di default "
             "'change-me-in-production'. Impostare una chiave sicura in produzione!", "warning")
-    if "auth" not in state:
+    # Reinizializza se mancante, None, o non è un dizionario
+    if not isinstance(state.get("auth"), dict):
         state["auth"] = _default_auth_state()
         bus.mark_dirty("state")
     auth = state["auth"]

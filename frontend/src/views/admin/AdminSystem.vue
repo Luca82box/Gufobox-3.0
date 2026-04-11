@@ -23,7 +23,7 @@
       <div class="power-row">
         <button class="btn-power standby" @click="sendAction('standby')" :disabled="powerBusy">🌙 Standby</button>
         <button class="btn-power reboot" @click="sendAction('reboot')" :disabled="powerBusy">🔄 Riavvia</button>
-        <button class="btn-power shutdown" @click="sendAction('shutdown')" :disabled="powerBusy">⏻ Spegni</button>
+        <button class="btn-power shutdown" @click="sendAction('shutdown')" :disabled="powerBusy">🔴 Spegni</button>
       </div>
     </div>
 

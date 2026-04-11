@@ -60,9 +60,9 @@
         <span class="tb-clock__date">{{ currentDate }}</span>
       </div>
 
-      <!-- ⏻ Spegni -->
+      <!-- 🔴 Spegni -->
       <button class="tb-btn tb-btn--power" @click="handleShutdown" title="Spegni GufoBox">
-        ⏻
+        🔴
       </button>
 
     </div>

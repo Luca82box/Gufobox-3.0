@@ -65,13 +65,12 @@
       <button class="btn-secondary" @click="loadStatus">🔄 Ricarica stato</button>
     </div>
 
-    <!-- OpenAI key status -->
+    <!-- OpenAI key card — interactive entry -->
     <div class="card">
       <h3>🔑 Chiave API OpenAI (TTS online)</h3>
-      <p>
-        La chiave OpenAI si configura tramite la variabile d'ambiente <code>OPENAI_API_KEY</code>
-        oppure dal pannello <strong>Gufetto AI → Impostazioni AI</strong>.
-        Non viene mai salvata nel codice sorgente.
+      <p class="hint">
+        Inserisci la tua chiave OpenAI per abilitare la sintesi vocale online e la chat AI.
+        Il valore viene salvato in modo sicuro sul dispositivo e non viene mai mostrato per intero.
       </p>
       <div class="status-item inline-status">
         <span class="status-label">Stato chiave</span>
@@ -79,10 +78,82 @@
           {{ openaiConfigured ? '✅ Configurata' : '❌ Non configurata' }}
         </span>
       </div>
-      <p v-if="!openaiConfigured" class="hint">
-        Per configurarla: imposta <code>OPENAI_API_KEY=sk-...</code> nel file <code>.env</code>
-        oppure vai in <strong>Gufetto AI → Impostazioni AI</strong> e inserisci la chiave lì.
+
+      <div class="form-group" style="margin-top:12px;">
+        <label>{{ openaiConfigured ? 'Aggiorna chiave API' : 'Inserisci chiave API' }}</label>
+        <input
+          type="password"
+          v-model="openaiKeyInput"
+          class="text-input"
+          placeholder="sk-..."
+          autocomplete="new-password"
+          maxlength="200"
+        />
+        <p class="hint">
+          Lascia vuoto per non modificare la chiave esistente.
+          La chiave non viene mai inclusa nelle risposte API.
+        </p>
+      </div>
+
+      <div class="form-actions">
+        <button class="btn-save" @click="saveOpenaiKey" :disabled="savingKey || !openaiKeyInput.trim()">
+          {{ savingKey ? 'Salvataggio...' : '💾 Salva chiave' }}
+        </button>
+        <button
+          v-if="openaiConfigured"
+          class="btn-danger"
+          @click="clearOpenaiKey"
+          :disabled="savingKey"
+        >
+          🗑️ Rimuovi chiave
+        </button>
+      </div>
+    </div>
+
+    <!-- Piper file upload card -->
+    <div class="card">
+      <h3>📤 Carica file voce Piper</h3>
+      <p class="hint">
+        Carica un modello voce Piper (<code>.onnx</code> + <code>.onnx.json</code>) direttamente
+        dal browser. I file vengono salvati in <code>data/piper_voices/</code>.
       </p>
+
+      <div class="form-group">
+        <label>Seleziona file voce (.onnx o .onnx.json)</label>
+        <input
+          ref="fileInputRef"
+          type="file"
+          accept=".onnx,.onnx.json"
+          multiple
+          class="file-input"
+          @change="onFilesSelected"
+        />
+        <p v-if="selectedFiles.length" class="hint">
+          {{ selectedFiles.length }} file selezionato{{ selectedFiles.length > 1 ? 'i' : '' }}:
+          {{ selectedFiles.map(f => f.name).join(', ') }}
+        </p>
+      </div>
+
+      <div class="form-actions">
+        <button
+          class="btn-upload"
+          @click="uploadPiperFiles"
+          :disabled="uploading || !selectedFiles.length"
+        >
+          {{ uploading ? '⏳ Caricamento...' : '📤 Carica' }}
+        </button>
+      </div>
+
+      <div v-if="uploadResults.length" class="upload-results">
+        <div
+          v-for="r in uploadResults"
+          :key="r.name"
+          class="upload-result-item"
+          :class="r.ok ? 'result-ok' : 'result-err'"
+        >
+          {{ r.ok ? '✅' : '❌' }} {{ r.name }}: {{ r.message }}
+        </div>
+      </div>
     </div>
 
     <!-- Settings card -->
@@ -186,6 +257,91 @@ const openaiConfigured = ref(false)
 const testText = ref('Ciao! Sono il Gufetto Magico. Come stai?')
 const testAudioUrl = ref(null)
 
+// ── OpenAI key management ──────────────────────────────────────────────────
+const openaiKeyInput = ref('')
+const savingKey = ref(false)
+
+async function saveOpenaiKey() {
+  const key = openaiKeyInput.value.trim()
+  if (!key) return
+  savingKey.value = true
+  clearFeedback()
+  try {
+    const api = getApi()
+    await guardedCall(() => api.post('/ai/settings', { openai_api_key: key }))
+    openaiKeyInput.value = ''
+    showSuccess('Chiave API OpenAI salvata.')
+    await loadOpenaiStatus()
+  } catch (e) {
+    showError(extractApiError(e, 'Errore salvataggio chiave'))
+  } finally {
+    savingKey.value = false
+  }
+}
+
+async function clearOpenaiKey() {
+  if (!confirm('Rimuovere la chiave API OpenAI?')) return
+  savingKey.value = true
+  clearFeedback()
+  try {
+    const api = getApi()
+    await guardedCall(() => api.post('/ai/settings', { openai_api_key: '' }))
+    showSuccess('Chiave API OpenAI rimossa.')
+    await loadOpenaiStatus()
+  } catch (e) {
+    showError(extractApiError(e, 'Errore rimozione chiave'))
+  } finally {
+    savingKey.value = false
+  }
+}
+
+// ── Piper file upload ──────────────────────────────────────────────────────
+const fileInputRef = ref(null)
+const selectedFiles = ref([])
+const uploading = ref(false)
+const uploadResults = ref([])
+
+function onFilesSelected(event) {
+  selectedFiles.value = Array.from(event.target.files || [])
+  uploadResults.value = []
+}
+
+async function uploadPiperFiles() {
+  if (!selectedFiles.value.length) return
+  uploading.value = true
+  uploadResults.value = []
+  clearFeedback()
+  const api = getApi()
+  const results = []
+  for (const file of selectedFiles.value) {
+    const formData = new FormData()
+    formData.append('file', file)
+    try {
+      await guardedCall(() => api.post('/tts/offline/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      }))
+      results.push({ name: file.name, ok: true, message: 'Caricato' })
+    } catch (e) {
+      const msg = extractApiError(e, 'Errore upload')
+      results.push({ name: file.name, ok: false, message: msg })
+    }
+  }
+  uploadResults.value = results
+  uploading.value = false
+  selectedFiles.value = []
+  if (fileInputRef.value) fileInputRef.value.value = ''
+  const allOk = results.every(r => r.ok)
+  if (allOk) {
+    showSuccess('Tutti i file caricati. Lista voci aggiornata.')
+  } else if (results.some(r => r.ok)) {
+    showSuccess('Alcuni file caricati — vedi dettagli sotto.')
+  } else {
+    showError('Upload fallito — vedi dettagli sotto.')
+  }
+  await loadStatus()
+}
+
+// ── Settings ───────────────────────────────────────────────────────────────
 const settings = reactive({
   offline_enabled: false,
   offline_voice: '',
@@ -457,6 +613,52 @@ onMounted(() => {
   cursor: pointer;
   margin-top: 10px;
 }
+
+.btn-danger {
+  background: #c62828;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-weight: bold;
+  cursor: pointer;
+}
+.btn-danger:disabled { background: #555; color: #888; cursor: not-allowed; }
+.btn-danger:hover:not(:disabled) { background: #e53935; }
+
+.btn-upload {
+  background: #0288d1;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-weight: bold;
+  cursor: pointer;
+}
+.btn-upload:disabled { background: #555; color: #888; cursor: not-allowed; }
+.btn-upload:hover:not(:disabled) { background: #0277bd; }
+
+.file-input {
+  display: block;
+  color: #ccc;
+  font-size: 0.9rem;
+  margin-top: 4px;
+}
+
+.upload-results {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.upload-result-item {
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 0.88rem;
+}
+.result-ok  { background: #1b3a1b; color: #a5d6a7; border: 1px solid #388e3c; }
+.result-err { background: #3b1212; color: #ef9a9a; border: 1px solid #c62828; }
 
 .audio-player {
   margin-top: 15px;

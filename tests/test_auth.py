@@ -406,3 +406,69 @@ def test_locked_until_restored_blocks_login(client):
     data = rv.get_json()
     assert "retry_in" in data
     assert data["retry_in"] > 0
+
+
+# ─── test robustezza init_auth con stato nullo/malformato ────────────────────
+
+def test_init_auth_with_null_state(client):
+    """init_auth deve gestire state['auth'] = None senza crash e ripristinare il default."""
+    from core.state import state
+    from api.auth import init_auth
+
+    state["auth"] = None
+    init_auth()
+
+    assert isinstance(state["auth"], dict), "auth deve essere un dict dopo init_auth"
+    assert "pin_hash" in state["auth"]
+    assert "admin_token" in state["auth"]
+    assert "fails" in state["auth"]
+    assert "locked_until" in state["auth"]
+
+
+def test_init_auth_with_non_dict_state(client):
+    """init_auth deve gestire state['auth'] = stringa/intero senza crash."""
+    from core.state import state
+    from api.auth import init_auth
+
+    for bad_value in [42, "malformed", [], True]:
+        state["auth"] = bad_value
+        init_auth()
+        assert isinstance(state["auth"], dict), \
+            f"auth deve essere dict dopo init_auth con valore {bad_value!r}"
+
+
+def test_login_after_null_auth_state(client):
+    """Il login deve funzionare dopo che lo stato auth era None."""
+    from core.state import state
+
+    state["auth"] = None
+    rv = client.post("/api/admin/login", json={"pin": "1234"})
+    assert rv.status_code == 200
+    assert rv.get_json()["status"] == "ok"
+
+
+def test_auth_state_helper_reinitializes_null(client):
+    """_auth_state() deve reinizializzare se state['auth'] è None."""
+    from core.state import state
+    from api.auth import _auth_state
+
+    state["auth"] = None
+    auth = _auth_state()
+    assert isinstance(auth, dict)
+    assert "pin_hash" in auth
+
+
+def test_init_auth_missing_keys_are_added(client):
+    """init_auth deve aggiungere le chiavi mancanti a un dict auth parziale."""
+    from core.state import state
+    from api.auth import init_auth
+
+    import hashlib
+    from config import SECRET_KEY, ADMIN_DEFAULT_PIN
+    pin_hash = hashlib.sha256(SECRET_KEY.encode() + ADMIN_DEFAULT_PIN.encode()).hexdigest()
+    state["auth"] = {"pin_hash": pin_hash, "admin_token": None}
+
+    init_auth()
+
+    assert "fails" in state["auth"]
+    assert "locked_until" in state["auth"]

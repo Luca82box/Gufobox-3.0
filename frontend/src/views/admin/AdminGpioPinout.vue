@@ -29,7 +29,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="pin in pinout" :key="pin.gpio + '-' + pin.peripheral">
+            <tr v-for="(pin, idx) in pinout" :key="idx + '-' + pin.peripheral">
               <td class="pin-peripheral">{{ pin.peripheral }}</td>
               <td class="pin-gpio">GPIO {{ pin.gpio }}</td>
               <td class="pin-physical">Pin {{ pin.physical_pin }}</td>

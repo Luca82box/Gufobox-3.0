@@ -92,6 +92,11 @@
           <span class="nav-icon">🔬</span>
           <span class="nav-label">Diagnostica</span>
         </button>
+
+        <button @click="currentTab = 'gpio'" :class="{ active: currentTab === 'gpio' }">
+          <span class="nav-icon">📌</span>
+          <span class="nav-label">GPIO Pinout</span>
+        </button>
       </nav>
 
       <div class="sidebar-footer">
@@ -144,6 +149,8 @@
 
           <AdminDiagnostics v-if="currentTab === 'diag'" />
 
+          <AdminGpioPinout v-if="currentTab === 'gpio'" />
+
         </div>
       </transition>
     </main>
@@ -173,6 +180,7 @@ import AdminAlarm from './admin/AdminAlarm.vue'
 import AdminDateTime from './admin/AdminDateTime.vue'
 import AdminSystem from './admin/AdminSystem.vue'
 import AdminDiagnostics from './admin/AdminDiagnostics.vue'
+import AdminGpioPinout from './admin/AdminGpioPinout.vue'
 
 const { logoutAdmin } = useAuth()
 const { offline } = useApi()

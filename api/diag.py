@@ -7,6 +7,7 @@ api/diag.py — Endpoints per metriche di sistema e diagnostica.
   GET  /api/diag/events       — event log operativo (ring buffer)
   POST /api/diag/selfcheck    — self-check operativo completo
   GET  /api/diag/export       — export diagnostica JSON
+  GET  /api/gpio/pinout       — mappa pin GPIO usati dalla GufoBox
 """
 
 import os
@@ -465,6 +466,35 @@ def api_diag_selfcheck():
         details={"ok": result["ok"], "error_count": len(result["errors"]), "warning_count": len(result["warnings"])},
     )
     return jsonify(result)
+
+
+# ─── GPIO pinout ─────────────────────────────────────────────────────────────
+
+@diag_bp.route("/gpio/pinout", methods=["GET"])
+def api_gpio_pinout():
+    """Ritorna la mappa dei pin GPIO usati dalla GufoBox."""
+    pinout = [
+        {"peripheral": "Pulsante Play/Pausa",    "gpio": 5,  "physical_pin": 29, "protocol": "GPIO Input",  "source": "hw/buttons.py"},
+        {"peripheral": "Pulsante Next",           "gpio": 6,  "physical_pin": 31, "protocol": "GPIO Input",  "source": "hw/buttons.py"},
+        {"peripheral": "Pulsante Prev",           "gpio": 13, "physical_pin": 33, "protocol": "GPIO Input",  "source": "hw/buttons.py"},
+        {"peripheral": "Pulsante Power",          "gpio": 3,  "physical_pin": 5,  "protocol": "GPIO Input",  "source": "hw/buttons.py"},
+        {"peripheral": "LED WS2813",              "gpio": 12, "physical_pin": 32, "protocol": "PWM0",        "source": "hw/led.py"},
+        {"peripheral": "Amplificatore ON/OFF",    "gpio": 20, "physical_pin": 38, "protocol": "GPIO Output", "source": "hw/amp.py"},
+        {"peripheral": "Amplificatore Mute",      "gpio": 26, "physical_pin": 37, "protocol": "GPIO Output", "source": "hw/amp.py"},
+        {"peripheral": "RFID RC522 (CS)",         "gpio": 8,  "physical_pin": 24, "protocol": "SPI0",        "source": "hw/rfid.py"},
+        {"peripheral": "RFID RC522 (SCK)",        "gpio": 11, "physical_pin": 23, "protocol": "SPI0",        "source": "hw/rfid.py"},
+        {"peripheral": "RFID RC522 (MOSI)",       "gpio": 10, "physical_pin": 19, "protocol": "SPI0",        "source": "hw/rfid.py"},
+        {"peripheral": "RFID RC522 (MISO)",       "gpio": 9,  "physical_pin": 21, "protocol": "SPI0",        "source": "hw/rfid.py"},
+        {"peripheral": "Batteria MAX17048 (SDA)", "gpio": 2,  "physical_pin": 3,  "protocol": "I2C1",        "source": "hw/battery.py"},
+        {"peripheral": "Batteria MAX17048 (SCL)", "gpio": 3,  "physical_pin": 5,  "protocol": "I2C1",        "source": "hw/battery.py"},
+    ]
+    return jsonify({
+        "pinout": pinout,
+        "notes": [
+            "GPIO 3 è condiviso: funge sia da I2C1 SCL per il MAX17048, "
+            "sia da pulsante Power/Wake (pull-up hardware 1.8kΩ)."
+        ],
+    })
 
 
 # ─── export diagnostica ──────────────────────────────────────────────────────

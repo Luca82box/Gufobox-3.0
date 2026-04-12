@@ -1,3 +1,7 @@
+# IMPORTANTE (eventlet): usare SEMPRE eventlet.sleep() nei loop di questo
+# worker — mai time.sleep(). time.sleep() blocca il thread eventlet e congela
+# l'intera applicazione cooperativa.
+
 import math
 import random
 import eventlet
@@ -126,6 +130,9 @@ def _led_worker():
             eventlet.sleep(sleep_time * 0.7)
 
         elif effect == "theater_chase":
+            # TODO: per carichi LED elevati (strisce >100 pixel) valuta di
+            # spostare theater_chase, fire, twinkle in un multiprocessing.Process
+            # separato comunicando via Queue, così da non saturare l'hub eventlet.
             for q in range(3):
                 for i in range(0, strip.numPixels(), 3):
                     if i + q < strip.numPixels():

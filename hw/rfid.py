@@ -1,3 +1,6 @@
+# IMPORTANTE (eventlet): usare SEMPRE eventlet.sleep() nei loop di questo
+# worker — mai time.sleep(). time.time() per i timestamp è OK (non bloccante).
+
 import time
 import eventlet
 from core.utils import log, is_shutdown_requested

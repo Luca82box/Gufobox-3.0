@@ -683,7 +683,6 @@ onBeforeUnmount(() => {
 .current-grid .label { color: #aaa; margin-right: 4px; }
 
 /* Profiles list */
-.rfid-list-card { }
 .list-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
 .btn-refresh { background: transparent; border: 1px solid #555; color: #ccc; padding: 4px 10px; border-radius: 6px; cursor: pointer; }
 .rfid-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 15px; margin-top: 15px; }

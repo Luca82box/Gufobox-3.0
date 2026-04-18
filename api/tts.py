@@ -431,8 +431,10 @@ def api_tts_offline_upload():
     try:
         safe_name = _validate_piper_upload_filename(upload.filename)
     except ValueError as exc:
-        # Return only the human-readable validation message (no stack trace)
-        return jsonify({"error": str(exc)[:_MAX_ERR_LEN]}), 400
+        # Log the specific validation error but return a static message to avoid
+        # any exception details leaking to the client
+        log(f"Piper upload validation error: {exc}", "warning")
+        return jsonify({"error": "File non valido: estensione o nome voce non consentito"}), 400
 
     # Guard against oversized uploads
     upload.seek(0, 2)

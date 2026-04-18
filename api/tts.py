@@ -58,7 +58,7 @@ _VOICE_NAME_RE = re.compile(r'^[a-zA-Z0-9_\-]+$')
 _MAX_ERR_LEN = 120
 # Allowed Piper voice file extensions
 _PIPER_ALLOWED_EXTENSIONS = {".onnx", ".onnx.json"}
-# Maximum upload size for a single Piper voice file (50 MB)
+# Maximum upload size for a single Piper voice file (200 MB)
 _PIPER_MAX_UPLOAD_MB = 200
 _PIPER_MAX_UPLOAD_BYTES = _PIPER_MAX_UPLOAD_MB * 1024 * 1024
 

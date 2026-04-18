@@ -13,9 +13,9 @@
           <span class="nav-label">Dashboard</span>
         </button>
 
-        <button @click="currentTab = 'media'" :class="{ active: currentTab === 'media' }">
+        <button @click="currentTab = 'media-statuine'" :class="{ active: currentTab === 'media-statuine' }">
           <span class="nav-icon">🎵</span>
-          <span class="nav-label">Libreria</span>
+          <span class="nav-label">Media &amp; Statuine</span>
         </button>
 
         <button @click="currentTab = 'files'" :class="{ active: currentTab === 'files' }">
@@ -46,11 +46,6 @@
         <button @click="currentTab = 'ai'" :class="{ active: currentTab === 'ai' }">
           <span class="nav-icon">🧠</span>
           <span class="nav-label">Gufetto</span>
-        </button>
-
-        <button @click="currentTab = 'rfid'" :class="{ active: currentTab === 'rfid' }">
-          <span class="nav-icon">🏷️</span>
-          <span class="nav-label">Statuine</span>
         </button>
 
         <button @click="currentTab = 'led'" :class="{ active: currentTab === 'led' }">
@@ -117,7 +112,7 @@
 
           <AdminDashboard v-if="currentTab === 'dashboard'" />
 
-          <AdminMediaManager v-if="currentTab === 'media'" />
+          <AdminMediaStatuine v-if="currentTab === 'media-statuine'" />
 
           <AdminFileManager v-if="currentTab === 'files'" />
 
@@ -130,8 +125,6 @@
           <AdminStats v-if="currentTab === 'stats'" />
 
           <AdminAiSettings v-if="currentTab === 'ai'" />
-
-          <AdminRfid v-if="currentTab === 'rfid'" />
 
           <AdminLed v-if="currentTab === 'led'" />
 
@@ -164,7 +157,7 @@ import { useAuth } from '../composables/useAuth'
 import { useApi } from '../composables/useApi'
 
 import AdminDashboard from './admin/AdminDashboard.vue'
-import AdminMediaManager from './admin/AdminMediaManager.vue'
+import AdminMediaStatuine from './admin/AdminMediaStatuine.vue'
 import AdminFileManager from './admin/AdminFileManager.vue'
 import AdminVoiceRecord from './admin/AdminVoiceRecord.vue'
 import AdminOfflineVoice from './admin/AdminOfflineVoice.vue'
@@ -174,7 +167,6 @@ import AdminAiSettings from './admin/AdminAiSettings.vue'
 import AdminNetwork from './admin/AdminNetwork.vue'
 import AdminBluetooth from './admin/AdminBluetooth.vue'
 import AdminAudio from './admin/AdminAudio.vue'
-import AdminRfid from './admin/AdminRfid.vue'
 import AdminLed from './admin/AdminLed.vue'
 import AdminAlarm from './admin/AdminAlarm.vue'
 import AdminDateTime from './admin/AdminDateTime.vue'

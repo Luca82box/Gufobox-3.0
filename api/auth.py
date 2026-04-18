@@ -84,8 +84,9 @@ def init_auth():
         bus.mark_dirty("state")
 
 
-# Inizializza subito all'import
-init_auth()
+# Nota: init_auth() non viene chiamata qui a livello di modulo per evitare
+# effetti collaterali all'import. Viene invocata esplicitamente da create_app()
+# in main.py, dopo la registrazione dei Blueprint.
 
 
 def _is_locked() -> bool:

@@ -92,6 +92,11 @@ def create_app():
     app.register_blueprint(wizard_bp, url_prefix='/api')
     app.register_blueprint(tts_bp, url_prefix='/api')
 
+    # Inizializza lo stato di autenticazione dopo la registrazione dei Blueprint,
+    # evitando effetti collaterali all'import di api/auth.py.
+    from api.auth import init_auth
+    init_auth()
+
     # Servi i file statici del frontend Vue (build produzione)
     if os.path.isdir(_FRONTEND_DIST):
         log(f"Frontend Vue build trovata in {_FRONTEND_DIST} — verrà servita da Flask.", "info")
@@ -151,6 +156,12 @@ if __name__ == "__main__":
         log("Inizializzazione Database e Rete Locale...", "info")
         init_db()
         init_mdns_discovery()
+
+        # Avvia il worker EventBus per il salvataggio asincrono e le emissioni WebSocket.
+        # Va chiamato esplicitamente qui (non nel costruttore) per evitare side-effect
+        # all'import del modulo e per non avviare green thread nei test.
+        from core.state import bus
+        bus.start()
 
         # 2. Avvia i processi software in background (Sleep Timer, Watchdog MPV, EventBus)
         log("Inizializzazione worker software (Media & System)...", "info")

@@ -1,7 +1,9 @@
 import os
 import time
 import subprocess
-import threading
+import threading  # Nota: con eventlet.monkey_patch() in main.py, threading.Lock diventa
+                  # green-thread-safe automaticamente. Senza monkey_patch (alcuni test),
+                  # i lock funzionano comunque in modo standard.
 import socket
 import json
 import eventlet

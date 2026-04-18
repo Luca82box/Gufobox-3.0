@@ -83,19 +83,30 @@ def update_alarm(alarm_id):
 def get_parental_settings():
     parental = state.get("parental_control", {
         "enabled": False,
+        "age_profile": "6-8",
         "daily_limit_minutes": 120,
         "allow_from": "08:00",
         "allow_to": "20:30",
         "max_volume": 80
     })
+    # Ensure age_profile exists in older saved states
+    if "age_profile" not in parental:
+        parental = dict(parental)
+        parental["age_profile"] = "6-8"
     return jsonify(parental)
 
 @settings_bp.route("/parental/settings", methods=["POST"])
 def save_parental_settings():
     data = request.get_json(silent=True) or {}
-    
+
+    from core.edu_config import VALID_AGE_PROFILES
+    age_profile = str(data.get("age_profile", "6-8")).strip()
+    if age_profile not in VALID_AGE_PROFILES:
+        age_profile = "6-8"
+
     state["parental_control"] = {
         "enabled": bool(data.get("enabled", False)),
+        "age_profile": age_profile,
         "daily_limit_minutes": int(data.get("daily_limit_minutes", 120)),
         "allow_from": data.get("allow_from", "08:00"),
         "allow_to": data.get("allow_to", "20:30"),

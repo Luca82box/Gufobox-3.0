@@ -2,7 +2,7 @@
   <div class="admin-parental">
     <div class="header-section">
       <h2>Parental Control 🛡️</h2>
-      <p>Imposta i limiti di utilizzo per proteggere il sonno e l'udito del tuo bambino.</p>
+      <p>Imposta i limiti di utilizzo e il profilo età per adattare il Gufetto al tuo bambino.</p>
     </div>
 
     <div v-if="loading" class="loading-state">Caricamento impostazioni... ⏳</div>
@@ -22,7 +22,32 @@
       </div>
 
       <div :class="['controls-wrapper', { 'is-disabled': !settings.enabled }]">
-        
+
+        <!-- Age profile selector -->
+        <div class="control-group">
+          <label>Fascia d'Età del Bambino</label>
+          <p class="help-text">Il Gufetto adatterà il linguaggio, i contenuti e la complessità all'età selezionata.</p>
+          <div class="age-grid">
+            <button
+              v-for="profile in AGE_PROFILES"
+              :key="profile.value"
+              class="age-btn"
+              :class="{ selected: settings.age_profile === profile.value }"
+              :disabled="!settings.enabled"
+              @click="settings.age_profile = profile.value"
+            >
+              <span class="age-icon">{{ profile.icon }}</span>
+              <span class="age-label">{{ profile.label }}</span>
+              <span class="age-sublabel">{{ profile.sub }}</span>
+            </button>
+          </div>
+          <p v-if="settings.age_profile === '14+'" class="age-note">
+            ℹ️ Con profilo 14+ il Gufetto usa un tono più maturo. I controlli di accesso rimangono comunque attivi.
+          </p>
+        </div>
+
+        <hr class="divider" />
+
         <div class="control-group">
           <label>Volume Massimo Consentito: {{ settings.max_volume }}%</label>
           <p class="help-text">Blocca il volume per evitare che venga alzato troppo dai pulsanti fisici.</p>
@@ -83,10 +108,18 @@ import { useAdminFeedback } from '../../composables/useAdminFeedback'
 const { getApi, guardedCall, extractApiError } = useApi()
 const { feedbackMsg, feedbackType, showSuccess, showError, clearFeedback } = useAdminFeedback()
 
+const AGE_PROFILES = [
+  { value: '3-5',  icon: '👶', label: '3–5 anni',  sub: 'Bambini piccoli' },
+  { value: '6-8',  icon: '🧒', label: '6–8 anni',  sub: 'Bambini medi' },
+  { value: '9-12', icon: '👦', label: '9–12 anni', sub: 'Ragazzi' },
+  { value: '14+',  icon: '🧑', label: '14+ anni',  sub: 'Teenagers' },
+]
+
 const loading = ref(true)
 const isSaving = ref(false)
 const settings = ref({
   enabled: false,
+  age_profile: '6-8',
   daily_limit_minutes: 120,
   allow_from: '08:00',
   allow_to: '20:30',
@@ -98,7 +131,7 @@ async function loadSettings() {
   try {
     const api = getApi()
     const { data } = await guardedCall(() => api.get('/parental/settings'))
-    settings.value = data
+    settings.value = { ...settings.value, ...data }
   } catch (e) {
     console.error('Errore caricamento parental control:', e)
   } finally {
@@ -164,6 +197,27 @@ onMounted(() => {
 .control-group label { color: #fff; font-weight: bold; font-size: 1.1rem; }
 .help-text { margin: 0; font-size: 0.85rem; color: #888; }
 
+/* Age profile grid */
+.age-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 10px;
+  margin-top: 5px;
+}
+.age-btn {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  background: #1e1e26; border: 2px solid #3a3a48;
+  border-radius: 10px; padding: 12px 8px;
+  cursor: pointer; transition: border-color .2s, background .2s;
+}
+.age-btn:hover:not(:disabled) { border-color: #7e57c2; background: #27243a; }
+.age-btn.selected { border-color: #7e57c2; background: #2d2044; }
+.age-btn:disabled { cursor: not-allowed; }
+.age-icon { font-size: 1.8rem; }
+.age-label { font-size: .95rem; font-weight: bold; color: #fff; }
+.age-sublabel { font-size: .78rem; color: #aaa; }
+.age-note { font-size: .85rem; color: #90caf9; margin: 6px 0 0; font-style: italic; }
+
 input[type="range"] { width: 100%; accent-color: #3f51b5; }
 input[type="number"], input[type="time"] {
   background: #1e1e26; border: 1px solid #3a3a48; color: white;
@@ -188,5 +242,7 @@ input:checked + .slider { background-color: #3f51b5; border-color: #3f51b5; }
 input:checked + .slider:before { transform: translateX(26px); background-color: white; }
 .slider.round { border-radius: 34px; }
 .slider.round:before { border-radius: 50%; }
+
+.loading-state { text-align: center; padding: 30px; color: #aaa; }
 </style>
 

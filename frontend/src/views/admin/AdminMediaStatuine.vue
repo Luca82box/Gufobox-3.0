@@ -45,6 +45,17 @@
               <option value="edu_ai">🎓 AI Educativa</option>
               <option value="school">🏫 Scuola (avvia wizard guidato)</option>
               <option value="entertainment">🎮 Intrattenimento (avvia wizard guidato)</option>
+              <optgroup label="🌟 Esperienze Bambini">
+                <option value="adventure">🗺️ Modalità Avventura</option>
+                <option value="spoken_quiz">🎤 Quiz Parlanti</option>
+                <option value="karaoke">🎵 Karaoke</option>
+                <option value="guess_sound">🔊 Indovina il Suono</option>
+                <option value="personalized_story">📖 Favole Personalizzate</option>
+                <option value="bedtime">🌙 Buonanotte / Rilassamento</option>
+                <option value="imitate">🎭 Modalità Imita</option>
+                <option value="playful_english">🇬🇧 Inglese Giocoso</option>
+                <option value="logic_games">🧩 Giochi Logici Semplici</option>
+              </optgroup>
             </select>
           </div>
           <div class="form-group form-group-inline">
@@ -175,6 +186,87 @@
           </div>
         </div>
 
+        <!-- CHILD EXPERIENCE — AI modes (adventure, spoken_quiz, guess_sound, imitate, logic_games) -->
+        <div v-if="isExperienceAiSimple" class="mode-section experience-section">
+          <h4>{{ modeLabel(form.mode) }}</h4>
+          <p class="mode-hint">Il Gufetto Magico avvierà questa esperienza interattiva per il tuo bambino. 🌟</p>
+          <div class="form-group">
+            <label>Fascia d'Età</label>
+            <select v-model="form.activity_config.age_group">
+              <option value="bambino">🧒 Bambino (3–7 anni)</option>
+              <option value="ragazzo">👦 Ragazzo (8–13 anni)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- CHILD EXPERIENCE — Favole Personalizzate -->
+        <div v-if="form.mode === 'personalized_story'" class="mode-section experience-section">
+          <h4>📖 Favole Personalizzate</h4>
+          <p class="mode-hint">Il Gufetto racconterà una storia magica e personalizzata. 🌟</p>
+          <div class="form-grid-2">
+            <div class="form-group">
+              <label>Fascia d'Età</label>
+              <select v-model="form.activity_config.age_group">
+                <option value="bambino">🧒 Bambino (3–7 anni)</option>
+                <option value="ragazzo">👦 Ragazzo (8–13 anni)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Nome del protagonista (opzionale)</label>
+              <input type="text" v-model="form.activity_config.character_name" placeholder="Es. Luna, Marco, Stella..." />
+            </div>
+            <div class="form-group form-group-full">
+              <label>Ambientazione (opzionale)</label>
+              <input type="text" v-model="form.activity_config.setting" placeholder="Es. foresta magica, castello medievale, pianeta lontano..." />
+            </div>
+          </div>
+        </div>
+
+        <!-- CHILD EXPERIENCE — Inglese Giocoso -->
+        <div v-if="form.mode === 'playful_english'" class="mode-section experience-section">
+          <h4>🇬🇧 Inglese Giocoso</h4>
+          <p class="mode-hint">Il Gufetto insegnerà l'inglese in modo giocoso! 🌟</p>
+          <div class="form-grid-2">
+            <div class="form-group">
+              <label>Fascia d'Età</label>
+              <select v-model="form.activity_config.age_group">
+                <option value="bambino">🧒 Bambino (3–7 anni)</option>
+                <option value="ragazzo">👦 Ragazzo (8–13 anni)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Livello (1–10): {{ form.activity_config.learning_step }}</label>
+              <input type="range" min="1" max="10" step="1" v-model.number="form.activity_config.learning_step" />
+            </div>
+          </div>
+        </div>
+
+        <!-- CHILD EXPERIENCE — Karaoke / Buonanotte (audio folder modes) -->
+        <div v-if="form.mode === 'karaoke' || form.mode === 'bedtime'" class="mode-section experience-section">
+          <h4>{{ form.mode === 'karaoke' ? '🎵 Karaoke' : '🌙 Buonanotte / Rilassamento' }}</h4>
+          <div class="selected-path-row">
+            <div class="selected-path-display" :class="{ 'has-value': form.folder }">
+              {{ form.folder || 'Nessuna selezione — usa l\'explorer →' }}
+            </div>
+            <button v-if="form.folder" class="btn-clear-path" @click="form.folder = ''" title="Rimuovi selezione">✕</button>
+          </div>
+          <p class="mode-hint">
+            {{ form.mode === 'karaoke'
+              ? 'Seleziona una cartella con le basi musicali o le canzoni per il karaoke.'
+              : 'Seleziona una cartella con musica rilassante, ninne nanne o storie della buonanotte.' }}
+          </p>
+          <div class="form-grid-2">
+            <div class="form-group">
+              <label>Volume {{ form.volume }}%</label>
+              <input type="range" min="0" max="100" v-model.number="form.volume" />
+            </div>
+            <div class="form-group form-group-inline">
+              <label>Loop</label>
+              <input type="checkbox" v-model="form.loop" class="checkbox-lg" />
+            </div>
+          </div>
+        </div>
+
         <!-- Immagine statuina -->
         <div class="form-group" style="margin-bottom:15px">
           <label>Immagine Statuina (percorso, opzionale)</label>
@@ -234,8 +326,8 @@
           </div>
         </div>
 
-        <!-- Select current folder button (only in media_folder mode) -->
-        <div v-if="form.mode === 'media_folder'" class="select-folder-bar">
+        <!-- Select current folder button (only in media_folder, karaoke, bedtime mode) -->
+        <div v-if="form.mode === 'media_folder' || form.mode === 'karaoke' || form.mode === 'bedtime'" class="select-folder-bar">
           <button class="btn-select-folder" @click="selectCurrentFolder">
             📂 Seleziona questa cartella
           </button>
@@ -253,7 +345,7 @@
           >
             <span class="ex-icon">{{ item.is_dir ? '📁' : (item.type === 'audio' ? '🎵' : '📄') }}</span>
             <span class="ex-name">{{ item.name }}</span>
-            <span v-if="!item.is_dir && form.mode === 'media_folder'" class="ex-select-hint">
+            <span v-if="!item.is_dir && isAudioFolderMode" class="ex-select-hint">
               {{ form.folder === item.path ? '✅' : 'Seleziona' }}
             </span>
           </li>
@@ -349,11 +441,19 @@ const EDU_CONFIG_DEFAULT = () => ({
   learning_step: 1,
 })
 
+const ACTIVITY_CONFIG_DEFAULT = () => ({
+  age_group: 'bambino',
+  learning_step: 1,
+  character_name: '',
+  setting: '',
+})
+
 const FORM_DEFAULT = () => ({
   rfid_code: '', name: '', enabled: true, mode: 'media_folder',
   image_path: '', folder: '', web_media_url: '', web_content_type: 'generic',
   ai_prompt: '', rss_limit: 10, volume: 70, loop: true,
   edu_config: EDU_CONFIG_DEFAULT(),
+  activity_config: ACTIVITY_CONFIG_DEFAULT(),
   led: { enabled: false, effect_id: 'solid', color: '#ffffff', brightness: 70, speed: 30 },
 })
 const form = reactive(FORM_DEFAULT())
@@ -378,6 +478,21 @@ const eduSummary = computed(() => {
   parts.push(`Step ${ec.learning_step}`)
   return parts.join(' · ')
 })
+
+// ─── Child experience mode helpers ────────────────────────
+const EXPERIENCE_AI_MODES = new Set([
+  'adventure', 'spoken_quiz', 'guess_sound', 'imitate', 'logic_games',
+  'personalized_story', 'playful_english',
+])
+const AUDIO_FOLDER_MODES = new Set(['media_folder', 'karaoke', 'bedtime'])
+
+const isExperienceAiSimple = computed(() =>
+  EXPERIENCE_AI_MODES.has(form.mode) &&
+  form.mode !== 'personalized_story' &&
+  form.mode !== 'playful_english'
+)
+
+const isAudioFolderMode = computed(() => AUDIO_FOLDER_MODES.has(form.mode))
 
 // ─── File browser ──────────────────────────────────────────
 async function loadFiles(path = '') {
@@ -405,7 +520,7 @@ function goUp() {
 function handleExplorerClick(item) {
   if (item.is_dir) {
     loadFiles(item.path)
-  } else if (form.mode === 'media_folder') {
+  } else if (isAudioFolderMode.value) {
     form.folder = item.path
   }
 }
@@ -422,8 +537,8 @@ function shortPath(p) {
 }
 
 function onModeChange() {
-  // Clear folder when switching away from media_folder
-  if (form.mode !== 'media_folder') form.folder = ''
+  // Clear folder when switching away from audio folder modes
+  if (!AUDIO_FOLDER_MODES.has(form.mode)) form.folder = ''
 }
 
 // ─── Profile CRUD ──────────────────────────────────────────
@@ -457,6 +572,7 @@ async function saveProfile() {
     rfid_code: form.rfid_code.trim().toUpperCase(),
     led: form.led.enabled ? { ...form.led } : undefined,
     edu_config: form.mode === 'edu_ai' ? { ...form.edu_config } : undefined,
+    activity_config: EXPERIENCE_AI_MODES.has(form.mode) ? { ...form.activity_config } : undefined,
   }
   try {
     if (isEditing.value) await guardedCall(() => getApi().put(`/rfid/profile/${payload.rfid_code}`, payload))
@@ -495,6 +611,7 @@ function editProfile(p) {
     ...p,
     led: p.led ? { ...p.led } : FORM_DEFAULT().led,
     edu_config: p.edu_config ? { ...EDU_CONFIG_DEFAULT(), ...p.edu_config } : EDU_CONFIG_DEFAULT(),
+    activity_config: p.activity_config ? { ...ACTIVITY_CONFIG_DEFAULT(), ...p.activity_config } : ACTIVITY_CONFIG_DEFAULT(),
   })
 }
 
@@ -512,10 +629,25 @@ function handleRfidScanned(data) {
 
 // ─── Display helpers ───────────────────────────────────────
 function modeIcon(m) {
-  return { media_folder: '🎵', web_media: '🌐', ai_chat: '🦉', edu_ai: '🎓', school: '🏫', entertainment: '🎮' }[m] || '🏷️'
+  const icons = {
+    media_folder: '🎵', web_media: '🌐', ai_chat: '🦉', edu_ai: '🎓',
+    school: '🏫', entertainment: '🎮',
+    adventure: '🗺️', spoken_quiz: '🎤', karaoke: '🎵', guess_sound: '🔊',
+    personalized_story: '📖', bedtime: '🌙', imitate: '🎭',
+    playful_english: '🇬🇧', logic_games: '🧩',
+  }
+  return icons[m] || '🏷️'
 }
 function modeLabel(m) {
-  return { media_folder: 'Cartella Media', web_media: 'Contenuto Web', ai_chat: 'AI Chat', edu_ai: 'AI Educativa', school: 'Scuola (wizard)', entertainment: 'Intrattenimento (wizard)' }[m] || m
+  const labels = {
+    media_folder: 'Cartella Media', web_media: 'Contenuto Web', ai_chat: 'AI Chat',
+    edu_ai: 'AI Educativa', school: 'Scuola (wizard)', entertainment: 'Intrattenimento (wizard)',
+    adventure: 'Modalità Avventura', spoken_quiz: 'Quiz Parlanti', karaoke: 'Karaoke',
+    guess_sound: 'Indovina il Suono', personalized_story: 'Favole Personalizzate',
+    bedtime: 'Buonanotte / Rilassamento', imitate: 'Modalità Imita',
+    playful_english: 'Inglese Giocoso', logic_games: 'Giochi Logici Semplici',
+  }
+  return labels[m] || m
 }
 function profileTarget(p) {
   if (p.mode === 'media_folder') return p.folder || ''
@@ -529,6 +661,14 @@ function profileTarget(p) {
   }
   if (p.mode === 'school') return 'Avvia wizard Scuola'
   if (p.mode === 'entertainment') return 'Avvia wizard Intrattenimento'
+  if (p.mode === 'karaoke' || p.mode === 'bedtime') return p.folder || ''
+  if (EXPERIENCE_AI_MODES.has(p.mode) && p.activity_config) {
+    const ac = p.activity_config
+    const parts = [AGE_LABELS[ac.age_group] || ac.age_group]
+    if (p.mode === 'personalized_story' && ac.character_name) parts.push(ac.character_name)
+    if (p.mode === 'playful_english') parts.push(`Livello ${ac.learning_step || 1}`)
+    return parts.join(' · ')
+  }
   return ''
 }
 
@@ -637,6 +777,10 @@ onBeforeUnmount(() => {
 .wizard-mode-section { border: 1px solid #3a5a8a; background: #1a2a3a; }
 .wizard-mode-info p { color: #9ec8e4; font-size: .9rem; margin: 6px 0; }
 
+/* Child experience sections */
+.experience-section { border: 1px solid #4a3a68; background: #1e1a2e; }
+.experience-section h4 { color: #b39ddb; }
+
 /* Edu section */
 .edu-ai-section .mode-hint { font-size: .85rem; color: #aaa; margin: -4px 0 12px; font-style: italic; }
 .edu-summary { margin-top: 12px; }
@@ -700,6 +844,15 @@ onBeforeUnmount(() => {
 .mode-badge.edu_ai { background: #2e7d32; }
 .mode-badge.school { background: #1565c0; }
 .mode-badge.entertainment { background: #6a1b9a; }
+.mode-badge.adventure { background: #4a148c; }
+.mode-badge.spoken_quiz { background: #e65100; }
+.mode-badge.karaoke { background: #880e4f; }
+.mode-badge.guess_sound { background: #1a237e; }
+.mode-badge.personalized_story { background: #33691e; }
+.mode-badge.bedtime { background: #263238; }
+.mode-badge.imitate { background: #b71c1c; }
+.mode-badge.playful_english { background: #01579b; }
+.mode-badge.logic_games { background: #4e342e; }
 .target-path { margin: 4px 0 0; font-size: .8rem; color: #aaa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .led-badge { margin: 4px 0 0; font-size: .8rem; color: #ffd27b; display: flex; align-items: center; gap: 5px; }
 .color-dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; border: 1px solid #555; }

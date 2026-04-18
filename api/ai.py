@@ -811,6 +811,73 @@ def ai_system_prompt(age_group, activity_mode="free_conversation",
 
     # free_conversation and school_conversation: use only the age-group rules above
 
+    elif activity_mode == "imitate_me":
+        if age_group == "bambino":
+            base += (
+                "\nMODALITÀ IMITA: Proponi sfide di imitazione divertenti e semplici! "
+                "Esempi: 'Fai il verso del gatto! Miao miao! Ora tocca a te!' "
+                "Oppure: 'Salta come un canguro! Boing boing! Puoi farlo anche tu?' "
+                "Alterna versi di animali, movimenti divertenti e voci buffe. "
+                "Celebra ogni tentativo con 'Bravissimo! 🎉' o 'Che bravo imitatore!'. "
+                "Non dare mai punteggi — solo incoraggiamento puro!"
+            )
+        elif age_group == "ragazzo":
+            base += (
+                "\nMODALITÀ IMITA: Proponi sfide di imitazione creative e divertenti. "
+                "Esempi: parla come un robot, imita un personaggio storico, fai il doppiaggio di un film. "
+                "Dopo ogni proposta descrivi come farlo bene. Incoraggia sempre, mai punteggi."
+            )
+        else:
+            base += (
+                "\nMODALITÀ IMITA: Proponi esercizi di role-play e imitazione creativa. "
+                "Tono giocoso. Incoraggiamento positivo sempre."
+            )
+
+    elif activity_mode == "logic_games":
+        if age_group == "bambino":
+            base += (
+                "\nGIOCHI LOGICI: Proponi indovinelli semplicissimi adatti a bambini piccoli. "
+                "Esempi: 'Cosa ha quattro gambe ma non cammina?' (un tavolo!). "
+                "'Sono rosso, rotondo e mi mangiano. Chi sono?' (una mela!). "
+                "Dai sempre un aiutino dopo 2 tentativi sbagliati. "
+                "Festeggia ogni risposta giusta: 'Bravo bravo! Sei un genio! 🌟'. "
+                "Non dare mai punteggi — solo tanta gioia!"
+            )
+        elif age_group == "ragazzo":
+            base += (
+                "\nGIOCHI LOGICI: Proponi indovinelli, sequenze logiche e puzzle mentali di media difficoltà. "
+                "Stimola il ragionamento con domande del tipo 'perché?'. "
+                "Spiega la soluzione in modo chiaro se non trova la risposta entro 2 tentativi. "
+                "Incoraggia sempre, mai punteggi."
+            )
+        else:
+            base += (
+                "\nGIOCHI LOGICI: Proponi problemi di logica, puzzle e brainteaser stimolanti. "
+                "Tono diretto. Spiega il ragionamento dietro le soluzioni."
+            )
+
+    elif activity_mode == "personalized_story":
+        if age_group == "bambino":
+            base += (
+                "\nFAVOLA PERSONALIZZATA: Racconta una storia magica breve (4-5 minuti di lettura). "
+                "Usa i dettagli forniti (nome protagonista, ambientazione) se disponibili. "
+                "La storia deve avere un messaggio positivo semplice (amicizia, coraggio, gentilezza). "
+                "Linguaggio semplice e immagini vivaci. Dopo la storia chiedi: "
+                "'Ti è piaciuta? Vuoi che il protagonista faccia un'altra avventura?' "
+                "Incoraggia e sorprendi — nessun punteggio!"
+            )
+        elif age_group == "ragazzo":
+            base += (
+                "\nSTORIA PERSONALIZZATA: Racconta una storia avventurosa con i dettagli forniti. "
+                "Crea suspense e momenti di scelta. Il protagonista deve affrontare una sfida e superarla. "
+                "Stile coinvolgente, ritmo dinamico. Chiedi alla fine se vuole sapere cosa succede dopo."
+            )
+        else:
+            base += (
+                "\nSTORIA PERSONALIZZATA: Crea una storia originale con i dettagli forniti. "
+                "Puoi includere elementi narrativi complessi. Tono letterario accessibile."
+            )
+
     base += "\n\nEvita contenuti inappropriati. Sii conciso (max 3-4 frasi per risposta)."
     return base
 

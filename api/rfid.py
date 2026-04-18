@@ -33,7 +33,33 @@ rfid_bp = Blueprint("rfid", __name__)
 # =========================================================
 # VALIDAZIONE
 # =========================================================
-VALID_MODES = {"media_folder", "webradio", "ai_chat", "rss_feed", "edu_ai", "web_media", "school", "entertainment", "voice_recording"}
+VALID_MODES = {
+    "media_folder", "webradio", "ai_chat", "rss_feed", "edu_ai",
+    "web_media", "school", "entertainment", "voice_recording",
+    # New child interactive experience modes (PR 32+)
+    "adventure", "spoken_quiz", "karaoke", "guess_sound",
+    "personalized_story", "bedtime", "imitate", "playful_english", "logic_games",
+}
+
+# New child experience modes that use the AI engine
+_EXPERIENCE_AI_MODES = {
+    "adventure", "spoken_quiz", "guess_sound", "imitate",
+    "playful_english", "logic_games", "personalized_story",
+}
+
+# New child experience modes that use audio folders (like media_folder)
+_EXPERIENCE_AUDIO_MODES = {"karaoke", "bedtime"}
+
+# Maps experience mode → (activity_mode forced, forced language_target, notification icon)
+_EXPERIENCE_MODE_MAP = {
+    "adventure":          ("interactive_story", None,      "🗺️"),
+    "spoken_quiz":        ("quiz",              None,      "🎤"),
+    "guess_sound":        ("animal_sounds_games", None,   "🔊"),
+    "imitate":            ("imitate_me",        None,      "🎭"),
+    "logic_games":        ("logic_games",       None,      "🧩"),
+    "personalized_story": ("personalized_story", None,    "📖"),
+    "playful_english":    ("foreign_languages", "english", "🇬🇧"),
+}
 
 # web_media content sub-types (for UI clarity; does not affect playback logic)
 VALID_WEB_CONTENT_TYPES = {"radio", "podcast", "youtube", "rss", "generic"}
@@ -143,6 +169,41 @@ def _validate_edu_config_block(edu_config, update=False):
     # Preserve 'activities' list if provided (future multi-activity support)
     if isinstance(edu_config.get("activities"), list):
         result["activities"] = edu_config["activities"]
+
+    return result, None
+
+
+def _validate_activity_config_block(activity_config, mode):
+    """
+    Valida il blocco activity_config per i nuovi modi esperienza bambini.
+    Ritorna (config_dict, error_string).
+
+    Campi:
+      age_group      — bambino | ragazzo (adulto non esposto per questi modi)
+      learning_step  — solo per playful_english (intero >= 1)
+      character_name — solo per personalized_story (stringa opzionale)
+      setting        — solo per personalized_story (stringa opzionale)
+    """
+    if activity_config is None:
+        activity_config = {}
+    if not isinstance(activity_config, dict):
+        return {"age_group": "bambino"}, "activity_config deve essere un oggetto"
+
+    age_group = str(activity_config.get("age_group", "bambino")).strip()
+    if age_group not in _VALID_AGE_GROUPS:
+        age_group = "bambino"
+
+    result = {"age_group": age_group}
+
+    if mode == "playful_english":
+        try:
+            result["learning_step"] = max(1, int(activity_config.get("learning_step", 1)))
+        except (TypeError, ValueError):
+            result["learning_step"] = 1
+
+    if mode == "personalized_story":
+        result["character_name"] = str(activity_config.get("character_name", "")).strip()[:60]
+        result["setting"] = str(activity_config.get("setting", "")).strip()[:60]
 
     return result, None
 
@@ -289,6 +350,20 @@ def validate_rfid_profile(data, update=False):
     if not update and mode == "voice_recording" and not recording_path:
         errors.append("recording_path è obbligatorio per mode=voice_recording")
 
+    # activity_config — per i nuovi modi esperienza AI bambini
+    activity_config = None
+    if mode in _EXPERIENCE_AI_MODES:
+        raw_ac = data.get("activity_config")
+        if raw_ac is None and not update:
+            raw_ac = {}
+        activity_config, ac_error = _validate_activity_config_block(raw_ac, mode)
+        if ac_error:
+            errors.append(ac_error)
+
+    # folder obbligatorio per karaoke e bedtime (come media_folder)
+    if not update and mode in _EXPERIENCE_AUDIO_MODES and not folder:
+        errors.append(f"folder è obbligatorio per mode={mode}")
+
     if errors:
         return None, "; ".join(errors)
 
@@ -309,6 +384,7 @@ def validate_rfid_profile(data, update=False):
         "loop": loop,
         "led": led,
         "edu_config": edu_config,
+        "activity_config": activity_config,
         "recording_path": recording_path,
         "updated_at": int(time.time()),
     }
@@ -468,6 +544,10 @@ def handle_rfid_trigger(rfid_code: str) -> bool:
             return _exec_wizard(rfid_code, profile)
         elif mode == "voice_recording":
             return _exec_voice_recording(rfid_code, profile)
+        elif mode in _EXPERIENCE_AI_MODES:
+            return _exec_experience_ai(rfid_code, profile)
+        elif mode in _EXPERIENCE_AUDIO_MODES:
+            return _exec_media_folder(rfid_code, profile)
         else:
             log(f"mode non supportato: {mode}", "warning")
             return False
@@ -740,6 +820,91 @@ def _exec_voice_recording(rfid_code, profile):
     return True
 
 
+def _apply_experience_ai_to_runtime(rfid_code, profile):
+    """
+    Shared helper: applies an AI-based child experience mode to ai_runtime and media_runtime.
+
+    Returns (ok: bool, result_dict: dict) where result_dict contains age_group,
+    activity_mode and icon for the caller to use in notifications / HTTP responses.
+    On error ok=False and result_dict contains an 'error' key.
+    """
+    from core.state import ai_runtime
+
+    mode = profile.get("mode", "adventure")
+    activity_mode, forced_lang, icon = _EXPERIENCE_MODE_MAP.get(mode, ("free_conversation", None, "🎮"))
+    activity_config = profile.get("activity_config") or {}
+    age_group = activity_config.get("age_group", "bambino")
+    language_target = forced_lang or "english"
+    learning_step = activity_config.get("learning_step", 1) if mode == "playful_english" else 1
+
+    edu_config = {
+        "age_group": age_group,
+        "activity_mode": activity_mode,
+        "language_target": language_target,
+        "learning_step": learning_step,
+    }
+
+    try:
+        from api.ai import apply_rfid_edu_config
+        apply_rfid_edu_config(edu_config)
+    except Exception as e:
+        log(f"Errore attivazione {mode} per RFID {rfid_code}: {e}", "warning")
+        bus.emit_notification("Errore nell'attivazione della modalità.", "error")
+        return False, {"error": f"Errore attivazione {mode}"}
+
+    # Per personalized_story inietta nome personaggio/ambientazione come extra_prompt
+    if mode == "personalized_story":
+        char = activity_config.get("character_name", "")
+        setting = activity_config.get("setting", "")
+        parts = []
+        if char:
+            parts.append(f"Il protagonista si chiama {char}")
+        if setting:
+            parts.append(f"L'ambientazione è: {setting}")
+        ai_runtime["extra_prompt"] = ". ".join(parts) + "." if parts else ""
+    else:
+        ai_runtime["extra_prompt"] = ""
+
+    ai_runtime["active_rfid"] = rfid_code
+    ai_runtime["active_profile_name"] = profile.get("name", "")
+    ai_runtime["edu_rfid_active"] = True
+    ai_runtime["history"] = []
+    bus.mark_dirty("ai")
+    bus.request_emit("public")
+
+    media_runtime["current_rfid"] = rfid_code
+    media_runtime["current_profile_name"] = profile.get("name")
+    media_runtime["current_mode"] = mode
+    bus.mark_dirty("media")
+    bus.request_emit("public")
+
+    return True, {"age_group": age_group, "activity_mode": activity_mode, "icon": icon}
+
+
+def _exec_experience_ai(rfid_code, profile):
+    """
+    Logica pura per i nuovi modi esperienza AI bambini:
+    adventure, spoken_quiz, guess_sound, imitate, logic_games,
+    personalized_story, playful_english.
+    """
+    mode = profile.get("mode", "adventure")
+    ok, result = _apply_experience_ai_to_runtime(rfid_code, profile)
+    if not ok:
+        return False
+
+    age_group = result["age_group"]
+    activity_mode = result["activity_mode"]
+    icon = result["icon"]
+
+    log(f"{mode} attivata: RFID={rfid_code} fascia={age_group}", "info")
+    log_event("rfid", "info", f"Esperienza {mode} attivata via RFID", {
+        "rfid_code": rfid_code, "profile_name": profile.get("name"),
+        "age_group": age_group, "activity_mode": activity_mode,
+    })
+    bus.emit_notification(f"{icon} {profile.get('name', rfid_code)}", "success")
+    return True
+
+
 # =========================================================
 # TRIGGER
 # =========================================================
@@ -792,6 +957,10 @@ def api_rfid_trigger_profile():
         return _trigger_wizard(rfid_code, profile)
     elif mode == "voice_recording":
         return _trigger_voice_recording(rfid_code, profile)
+    elif mode in _EXPERIENCE_AI_MODES:
+        return _trigger_experience_ai(rfid_code, profile)
+    elif mode in _EXPERIENCE_AUDIO_MODES:
+        return _trigger_media_folder(rfid_code, profile)
     else:
         return jsonify({"error": f"mode non supportato: {mode}"}), 400
 
@@ -1189,6 +1358,36 @@ def _trigger_voice_recording(rfid_code, profile):
         "mode": "voice_recording",
         "profile_name": profile.get("name"),
         "recording_path": recording_path,
+    })
+
+
+def _trigger_experience_ai(rfid_code, profile):
+    """
+    HTTP handler per i nuovi modi esperienza AI bambini:
+    adventure, spoken_quiz, guess_sound, imitate, logic_games,
+    personalized_story, playful_english.
+    """
+    mode = profile.get("mode", "adventure")
+    ok, result = _apply_experience_ai_to_runtime(rfid_code, profile)
+    if not ok:
+        return jsonify({"error": result.get("error", "Errore attivazione")}), 500
+
+    age_group = result["age_group"]
+    activity_mode = result["activity_mode"]
+    icon = result["icon"]
+
+    log_event("rfid", "info", f"Esperienza {mode} attivata via RFID", {
+        "rfid_code": rfid_code, "profile_name": profile.get("name"),
+        "age_group": age_group, "activity_mode": activity_mode,
+    })
+    bus.emit_notification(f"{icon} {profile.get('name', rfid_code)}", "success")
+    return jsonify({
+        "status": "ok",
+        "mode": mode,
+        "profile_name": profile.get("name"),
+        "rfid_code": rfid_code,
+        "age_group": age_group,
+        "activity_mode": activity_mode,
     })
 
 

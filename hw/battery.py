@@ -1,7 +1,10 @@
 import os
 import time
 import hashlib
-import smbus2
+try:
+    import smbus2
+except ImportError:
+    smbus2 = None
 import eventlet
 from core.state import state, bus
 from core.utils import log
@@ -15,6 +18,8 @@ REG_SOC = 0x04
 REG_CRATE = 0x16  # CRATE register: rate of change (positive = charging)
 
 def read_battery_max17048():
+    if smbus2 is None:
+        return None, None, None
     try:
         with smbus2.SMBus(1) as i2c_bus:
             # Legge la percentuale di carica (State of Charge)

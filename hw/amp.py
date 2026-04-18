@@ -26,7 +26,7 @@ if DigitalOutputDevice is not None:
 
 def amp_on():
     """Accende l'amplificatore e toglie il mute in modo morbido (anti-pop)"""
-    if not amp_trigger: return
+    if not amp_trigger or not amp_mute: return
     
     log("🔊 Accensione Amplificatore...", "debug")
     amp_trigger.on()       # Dà corrente
@@ -35,7 +35,7 @@ def amp_on():
 
 def amp_off():
     """Mette in muto e poi toglie l'alimentazione"""
-    if not amp_trigger: return
+    if not amp_trigger or not amp_mute: return
     
     log("🔇 Spegnimento Amplificatore...", "debug")
     amp_mute.on()          # Mette in muto istantaneamente

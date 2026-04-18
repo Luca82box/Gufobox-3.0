@@ -1,7 +1,9 @@
 import os
 import json
 import time
-import threading
+import threading  # Nota: con eventlet.monkey_patch() in main.py, threading.Lock diventa
+                  # green-thread-safe automaticamente. Senza monkey_patch (alcuni test),
+                  # i lock funzionano comunque in modo standard.
 import eventlet
 from copy import deepcopy
 
@@ -142,8 +144,13 @@ def get_jobs_list_sorted():
 
 def build_public_snapshot():
     # Se abbiamo già calcolato il JSON di recente, usiamo la cache!
-    if bus.cached_public_json: 
-        return bus.cached_public_json
+    # Guard difensivo: bus è definito più in basso nel modulo; se questa funzione
+    # venisse chiamata prima della sua creazione, si evita un NameError.
+    try:
+        if bus.cached_public_json:
+            return bus.cached_public_json
+    except NameError:
+        pass
     # Include standby state (in-memory, not persisted)
     in_standby = False
     standby_state = "awake"
@@ -169,7 +176,10 @@ def build_public_snapshot():
         payload["wizard"] = get_wizard_state()
     except Exception:
         pass
-    bus.cached_public_json = payload
+    try:
+        bus.cached_public_json = payload
+    except NameError:
+        pass
     return payload
 
 def build_admin_snapshot():
@@ -215,7 +225,14 @@ class EventBus:
         self.cached_public_json = None
         self.cached_admin_json = None
         self.pending_emits = set()
-        # Avviamo il worker in background
+        self._started = False
+
+    def start(self):
+        """Avvia il worker in background. Chiamare esplicitamente da main.py.
+        Il guard _started previene doppie chiamate accidentali."""
+        if self._started:
+            return
+        self._started = True
         eventlet.spawn(self._worker)
 
     def mark_dirty(self, file_type):

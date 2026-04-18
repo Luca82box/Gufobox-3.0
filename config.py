@@ -73,7 +73,8 @@ OTA_STATE_FILE = os.path.join(DATA_DIR, "ota_state.json")
 OTA_STAGING_DIR = os.path.join(DATA_DIR, "ota_staging")
 OTA_MAX_PACKAGE_BYTES = 100 * 1024 * 1024  # 100 MB
 
-# Piper TTS voice upload limit (must be >= OTA_MAX_PACKAGE_BYTES in main.py MAX_CONTENT_LENGTH)
+# Piper TTS voice upload limit — used together with OTA_MAX_PACKAGE_BYTES to determine
+# the global Flask MAX_CONTENT_LENGTH (see main.py).
 PIPER_MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # 200 MB
 os.makedirs(BACKUP_DIR, exist_ok=True)
 os.makedirs(OTA_STAGING_DIR, exist_ok=True)

@@ -820,14 +820,13 @@ def _exec_voice_recording(rfid_code, profile):
     return True
 
 
-def _exec_experience_ai(rfid_code, profile):
+def _apply_experience_ai_to_runtime(rfid_code, profile):
     """
-    Logica pura per i nuovi modi esperienza AI bambini:
-    adventure, spoken_quiz, guess_sound, imitate, logic_games,
-    personalized_story, playful_english.
+    Shared helper: applies an AI-based child experience mode to ai_runtime and media_runtime.
 
-    Costruisce edu_config forzando l'activity_mode appropriato,
-    poi delega ad apply_rfid_edu_config come edu_ai.
+    Returns (ok: bool, result_dict: dict) where result_dict contains age_group,
+    activity_mode and icon for the caller to use in notifications / HTTP responses.
+    On error ok=False and result_dict contains an 'error' key.
     """
     from core.state import ai_runtime
 
@@ -851,7 +850,7 @@ def _exec_experience_ai(rfid_code, profile):
     except Exception as e:
         log(f"Errore attivazione {mode} per RFID {rfid_code}: {e}", "warning")
         bus.emit_notification("Errore nell'attivazione della modalità.", "error")
-        return False
+        return False, {"error": f"Errore attivazione {mode}"}
 
     # Per personalized_story inietta nome personaggio/ambientazione come extra_prompt
     if mode == "personalized_story":
@@ -878,6 +877,24 @@ def _exec_experience_ai(rfid_code, profile):
     media_runtime["current_mode"] = mode
     bus.mark_dirty("media")
     bus.request_emit("public")
+
+    return True, {"age_group": age_group, "activity_mode": activity_mode, "icon": icon}
+
+
+def _exec_experience_ai(rfid_code, profile):
+    """
+    Logica pura per i nuovi modi esperienza AI bambini:
+    adventure, spoken_quiz, guess_sound, imitate, logic_games,
+    personalized_story, playful_english.
+    """
+    mode = profile.get("mode", "adventure")
+    ok, result = _apply_experience_ai_to_runtime(rfid_code, profile)
+    if not ok:
+        return False
+
+    age_group = result["age_group"]
+    activity_mode = result["activity_mode"]
+    icon = result["icon"]
 
     log(f"{mode} attivata: RFID={rfid_code} fascia={age_group}", "info")
     log_event("rfid", "info", f"Esperienza {mode} attivata via RFID", {
@@ -1350,55 +1367,14 @@ def _trigger_experience_ai(rfid_code, profile):
     adventure, spoken_quiz, guess_sound, imitate, logic_games,
     personalized_story, playful_english.
     """
-    from core.state import ai_runtime
-
     mode = profile.get("mode", "adventure")
-    activity_mode, forced_lang, icon = _EXPERIENCE_MODE_MAP.get(mode, ("free_conversation", None, "🎮"))
-    activity_config = profile.get("activity_config") or {}
-    age_group = activity_config.get("age_group", "bambino")
-    language_target = forced_lang or "english"
-    learning_step = activity_config.get("learning_step", 1) if mode == "playful_english" else 1
+    ok, result = _apply_experience_ai_to_runtime(rfid_code, profile)
+    if not ok:
+        return jsonify({"error": result.get("error", "Errore attivazione")}), 500
 
-    edu_config = {
-        "age_group": age_group,
-        "activity_mode": activity_mode,
-        "language_target": language_target,
-        "learning_step": learning_step,
-    }
-
-    try:
-        from api.ai import apply_rfid_edu_config
-        apply_rfid_edu_config(edu_config)
-    except Exception as e:
-        log(f"Errore attivazione {mode} per RFID {rfid_code}: {e}", "warning")
-        bus.emit_notification("Errore nell'attivazione della modalità.", "error")
-        return jsonify({"error": f"Errore attivazione {mode}"}), 500
-
-    # Per personalized_story inietta nome personaggio/ambientazione come extra_prompt
-    if mode == "personalized_story":
-        char = activity_config.get("character_name", "")
-        setting = activity_config.get("setting", "")
-        parts = []
-        if char:
-            parts.append(f"Il protagonista si chiama {char}")
-        if setting:
-            parts.append(f"L'ambientazione è: {setting}")
-        ai_runtime["extra_prompt"] = ". ".join(parts) + "." if parts else ""
-    else:
-        ai_runtime["extra_prompt"] = ""
-
-    ai_runtime["active_rfid"] = rfid_code
-    ai_runtime["active_profile_name"] = profile.get("name", "")
-    ai_runtime["edu_rfid_active"] = True
-    ai_runtime["history"] = []
-    bus.mark_dirty("ai")
-    bus.request_emit("public")
-
-    media_runtime["current_rfid"] = rfid_code
-    media_runtime["current_profile_name"] = profile.get("name")
-    media_runtime["current_mode"] = mode
-    bus.mark_dirty("media")
-    bus.request_emit("public")
+    age_group = result["age_group"]
+    activity_mode = result["activity_mode"]
+    icon = result["icon"]
 
     log_event("rfid", "info", f"Esperienza {mode} attivata via RFID", {
         "rfid_code": rfid_code, "profile_name": profile.get("name"),

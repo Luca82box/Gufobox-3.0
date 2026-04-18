@@ -235,7 +235,7 @@
               </select>
             </div>
             <div class="form-group">
-              <label>Livello (1–10): {{ form.activity_config.learning_step }}</label>
+              <label>Livello (1–10): {{ form.activity_config.learning_step ?? 1 }}</label>
               <input type="range" min="1" max="10" step="1" v-model.number="form.activity_config.learning_step" />
             </div>
           </div>
@@ -443,9 +443,6 @@ const EDU_CONFIG_DEFAULT = () => ({
 
 const ACTIVITY_CONFIG_DEFAULT = () => ({
   age_group: 'bambino',
-  learning_step: 1,
-  character_name: '',
-  setting: '',
 })
 
 const FORM_DEFAULT = () => ({
@@ -539,6 +536,14 @@ function shortPath(p) {
 function onModeChange() {
   // Clear folder when switching away from audio folder modes
   if (!AUDIO_FOLDER_MODES.has(form.mode)) form.folder = ''
+  // Initialize mode-specific activity_config fields on demand
+  if (form.mode === 'playful_english' && form.activity_config.learning_step === undefined) {
+    form.activity_config.learning_step = 1
+  }
+  if (form.mode === 'personalized_story') {
+    if (form.activity_config.character_name === undefined) form.activity_config.character_name = ''
+    if (form.activity_config.setting === undefined) form.activity_config.setting = ''
+  }
 }
 
 // ─── Profile CRUD ──────────────────────────────────────────
@@ -607,11 +612,19 @@ async function triggerProfile(code) {
 function editProfile(p) {
   isEditing.value = true
   Object.assign(form, FORM_DEFAULT())
+  // Merge saved activity_config over the minimal default
+  const savedAc = p.activity_config ? { ...p.activity_config } : {}
+  // Ensure mode-specific fields exist
+  if (p.mode === 'playful_english' && savedAc.learning_step === undefined) savedAc.learning_step = 1
+  if (p.mode === 'personalized_story') {
+    if (savedAc.character_name === undefined) savedAc.character_name = ''
+    if (savedAc.setting === undefined) savedAc.setting = ''
+  }
   Object.assign(form, {
     ...p,
     led: p.led ? { ...p.led } : FORM_DEFAULT().led,
     edu_config: p.edu_config ? { ...EDU_CONFIG_DEFAULT(), ...p.edu_config } : EDU_CONFIG_DEFAULT(),
-    activity_config: p.activity_config ? { ...ACTIVITY_CONFIG_DEFAULT(), ...p.activity_config } : ACTIVITY_CONFIG_DEFAULT(),
+    activity_config: { ...ACTIVITY_CONFIG_DEFAULT(), ...savedAc },
   })
 }
 

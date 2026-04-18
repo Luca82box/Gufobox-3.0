@@ -72,6 +72,9 @@ OTA_LOG_FILE = os.path.join(DATA_DIR, "ota.log")
 OTA_STATE_FILE = os.path.join(DATA_DIR, "ota_state.json")
 OTA_STAGING_DIR = os.path.join(DATA_DIR, "ota_staging")
 OTA_MAX_PACKAGE_BYTES = 100 * 1024 * 1024  # 100 MB
+
+# Piper TTS voice upload limit (must be >= OTA_MAX_PACKAGE_BYTES in main.py MAX_CONTENT_LENGTH)
+PIPER_MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # 200 MB
 os.makedirs(BACKUP_DIR, exist_ok=True)
 os.makedirs(OTA_STAGING_DIR, exist_ok=True)
 

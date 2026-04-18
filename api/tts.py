@@ -32,6 +32,7 @@ from werkzeug.utils import secure_filename
 
 from config import (
     AI_TTS_CACHE_DIR,
+    PIPER_MAX_UPLOAD_BYTES,
     PIPER_SETTINGS_FILE,
     PIPER_TTS_CACHE_DIR,
     PIPER_VOICES_DIR,
@@ -58,9 +59,8 @@ _VOICE_NAME_RE = re.compile(r'^[a-zA-Z0-9_\-]+$')
 _MAX_ERR_LEN = 120
 # Allowed Piper voice file extensions
 _PIPER_ALLOWED_EXTENSIONS = {".onnx", ".onnx.json"}
-# Maximum upload size for a single Piper voice file (200 MB)
-_PIPER_MAX_UPLOAD_MB = 200
-_PIPER_MAX_UPLOAD_BYTES = _PIPER_MAX_UPLOAD_MB * 1024 * 1024
+# Maximum upload size for a single Piper voice file — defined in config.py
+_PIPER_MAX_UPLOAD_MB = PIPER_MAX_UPLOAD_BYTES // (1024 * 1024)
 
 piper_settings = load_json(PIPER_SETTINGS_FILE, _DEFAULT_PIPER_SETTINGS)
 
@@ -440,7 +440,7 @@ def api_tts_offline_upload():
     upload.seek(0, 2)
     file_size = upload.tell()
     upload.seek(0)
-    if file_size > _PIPER_MAX_UPLOAD_BYTES:
+    if file_size > PIPER_MAX_UPLOAD_BYTES:
         return jsonify({"error": f"File troppo grande (max {_PIPER_MAX_UPLOAD_MB} MB)"}), 413
 
     dest_path = os.path.join(PIPER_VOICES_DIR, safe_name)

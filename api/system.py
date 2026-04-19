@@ -59,6 +59,18 @@ def api_system():
 
 
 # =========================================================
+# CONNETTIVITÀ
+# =========================================================
+@system_bp.route("/system/connectivity", methods=["GET"])
+def api_system_connectivity():
+    """Ritorna lo stato della connettività internet e OpenAI."""
+    from core.connectivity import has_internet, has_openai
+    internet = has_internet()
+    openai_ok = has_openai()
+    return jsonify({"internet": internet, "openai": openai_ok})
+
+
+# =========================================================
 # MODALITÀ NOTTE
 # =========================================================
 

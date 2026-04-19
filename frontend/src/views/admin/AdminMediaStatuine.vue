@@ -267,6 +267,23 @@
           </div>
         </div>
 
+        <!-- OFFLINE FALLBACK FOLDER (for all network-dependent modes) -->
+        <div v-if="isNetworkMode" class="mode-section offline-section">
+          <h4>📴 Cartella fallback offline (opzionale)</h4>
+          <div class="selected-path-row">
+            <div class="selected-path-display" :class="{ 'has-value': form.offline_folder }">
+              {{ form.offline_folder || 'Nessuna selezione — usa l\'explorer →' }}
+            </div>
+            <button v-if="form.offline_folder" class="btn-clear-path" @click="form.offline_folder = ''" title="Rimuovi selezione">✕</button>
+          </div>
+          <p class="mode-hint">Contenuti riprodotti automaticamente se internet non è disponibile. Se vuoto, usa la cartella di default.</p>
+          <div class="select-offline-folder-row">
+            <button class="btn-select-offline" @click="form.offline_folder = currentPath">
+              📂 Usa cartella corrente come fallback
+            </button>
+          </div>
+        </div>
+
         <!-- Immagine statuina -->
         <div class="form-group" style="margin-bottom:15px">
           <label>Immagine Statuina (percorso, opzionale)</label>
@@ -451,6 +468,7 @@ const FORM_DEFAULT = () => ({
   ai_prompt: '', rss_limit: 10, volume: 70, loop: true,
   edu_config: EDU_CONFIG_DEFAULT(),
   activity_config: ACTIVITY_CONFIG_DEFAULT(),
+  offline_folder: '',
   led: { enabled: false, effect_id: 'solid', color: '#ffffff', brightness: 70, speed: 30 },
 })
 const form = reactive(FORM_DEFAULT())
@@ -490,6 +508,14 @@ const isExperienceAiSimple = computed(() =>
 )
 
 const isAudioFolderMode = computed(() => AUDIO_FOLDER_MODES.has(form.mode))
+
+// Modes that require internet / AI: show offline_folder field
+const NETWORK_DEPENDENT_MODES = new Set([
+  'ai_chat', 'edu_ai', 'webradio', 'web_media', 'rss_feed', 'school', 'entertainment',
+  'adventure', 'spoken_quiz', 'guess_sound', 'imitate', 'logic_games',
+  'personalized_story', 'playful_english',
+])
+const isNetworkMode = computed(() => NETWORK_DEPENDENT_MODES.has(form.mode))
 
 // ─── File browser ──────────────────────────────────────────
 async function loadFiles(path = '') {
@@ -878,4 +904,15 @@ onBeforeUnmount(() => {
 .text-red { color: #ff4d4d; }
 .loading-state { text-align: center; padding: 20px; color: #aaa; }
 .empty-state { text-align: center; padding: 30px; color: #aaa; font-style: italic; }
+
+/* Offline fallback section */
+.offline-section { border: 1px solid #4a3a20; background: #1e1a10; }
+.offline-section h4 { color: #ffcc80; }
+.select-offline-folder-row { margin-top: 8px; }
+.btn-select-offline {
+  background: #5d4037; color: #ffcc80; border: none;
+  padding: 8px 14px; border-radius: 8px; font-size: .9rem;
+  cursor: pointer; transition: background .2s;
+}
+.btn-select-offline:hover { background: #795548; }
 </style>

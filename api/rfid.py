@@ -754,7 +754,7 @@ def _exec_ai_chat(rfid_code, profile):
 def _exec_rss_feed(rfid_code, profile):
     """Logica pura per mode=rss_feed."""
     if not has_internet():
-        ok, _ = _offline_fallback(rfid_code, profile, "rss")
+        ok, _ = _offline_fallback(rfid_code, profile, "rss_feed")
         return ok
 
     rss_url = profile.get("rss_url", "")
@@ -1267,7 +1267,7 @@ def _trigger_ai_chat(rfid_code, profile):
 def _trigger_rss_feed(rfid_code, profile):
     """mode=rss_feed: fetch feed RSS e salva stato runtime."""
     if not has_internet():
-        ok, data = _offline_fallback(rfid_code, profile, "rss")
+        ok, data = _offline_fallback(rfid_code, profile, "rss_feed")
         if ok:
             return jsonify(data)
         return jsonify(data), 503

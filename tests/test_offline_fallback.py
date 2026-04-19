@@ -246,7 +246,6 @@ class TestOfflineFallbackPriority:
             assert ok is True
             assert "ai_chat" in data["folder"]
 
-
 # ---------------------------------------------------------------------------
 # 5) Nessun contenuto offline → notifica di errore
 # ---------------------------------------------------------------------------

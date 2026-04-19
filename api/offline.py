@@ -109,8 +109,8 @@ def api_offline_content_delete(mode):
     try:
         result = delete_offline_content(mode)
         return jsonify(result)
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+    except ValueError:
+        return jsonify({"error": "Mode non valido"}), 400
     except Exception as e:
         log(f"Errore eliminazione contenuti offline {mode}: {e}", "error")
         return jsonify({"error": "Errore interno durante l'eliminazione"}), 500

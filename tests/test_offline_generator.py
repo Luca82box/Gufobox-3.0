@@ -199,10 +199,10 @@ class TestGenerateOfflineContent:
         expected = len(OFFLINE_TEMPLATES["spoken_quiz"])
         assert result["generated"] == expected
         assert result["details"]["spoken_quiz"]["generated"] == expected
-        # Le altre cartelle non devono esistere
+        # Le altre modalità non devono essere presenti nel report
         for mode in OFFLINE_TEMPLATES:
             if mode != "spoken_quiz":
-                assert "adventure" not in result["details"] or mode != "adventure"
+                assert mode not in result["details"]
 
     # 4) generate_offline_content(force=False) salta file esistenti
     def test_skips_existing_files_when_force_false(self, tmp_path, tmp_offline_dir):

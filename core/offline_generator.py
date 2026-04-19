@@ -285,17 +285,22 @@ def delete_offline_content(mode: str) -> dict:
     if mode not in OFFLINE_TEMPLATES:
         raise ValueError(f"Mode non valido: {mode}")
 
-    mode_dir = os.path.join(OFFLINE_FALLBACK_DIR, mode)
+    # Use the validated key from OFFLINE_TEMPLATES (not the raw user input)
+    # to prevent any path-traversal risk when building the directory path.
+    safe_mode = next(k for k in OFFLINE_TEMPLATES if k == mode)
+    mode_dir = os.path.join(OFFLINE_FALLBACK_DIR, safe_mode)
     deleted = 0
 
     if os.path.isdir(mode_dir):
         for fname in os.listdir(mode_dir):
-            if fname.lower().endswith(".wav") or fname.lower().endswith(".mp3"):
-                fpath = os.path.join(mode_dir, fname)
+            # Only process plain audio filenames — no sub-paths
+            clean_name = os.path.basename(fname)
+            if clean_name.lower().endswith(".wav") or clean_name.lower().endswith(".mp3"):
+                fpath = os.path.join(mode_dir, clean_name)
                 try:
                     os.remove(fpath)
                     deleted += 1
                 except OSError as e:
                     log(f"Offline generator: cannot delete {fpath}: {e}", "warning")
 
-    return {"deleted": deleted, "mode": mode}
+    return {"deleted": deleted, "mode": safe_mode}

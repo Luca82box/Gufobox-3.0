@@ -246,40 +246,45 @@ class TestButtonsDirectCall:
         btns._DIRECT_AVAILABLE = True
         mock_fn = MagicMock()
         btns._perform_standby = mock_fn
+        # action_power_hold is now a no-op: verify _perform_standby is never called
         btns.action_power_hold()
-        mock_fn.assert_called_once()
+        mock_fn.assert_not_called()
         btns._DIRECT_AVAILABLE = original
         btns._perform_standby = original_fn
 
     def test_action_power_press_calls_wake_when_in_standby(self):
         import hw.buttons as btns
+        from unittest.mock import patch
         original = btns._DIRECT_AVAILABLE
-        original_is = btns._is_in_standby
         original_wake = btns._wake_from_standby
         btns._DIRECT_AVAILABLE = True
-        btns._is_in_standby = MagicMock(return_value=True)
         mock_wake = MagicMock()
         btns._wake_from_standby = mock_wake
-        btns.action_power_press()
+        # action_power_press uses core.hardware.get_standby_state() internally
+        with patch("core.hardware.get_standby_state", return_value="standby"):
+            btns.action_power_press()
         mock_wake.assert_called_once()
         btns._DIRECT_AVAILABLE = original
-        btns._is_in_standby = original_is
         btns._wake_from_standby = original_wake
 
     def test_action_power_press_no_wake_when_awake(self):
         import hw.buttons as btns
+        from unittest.mock import patch
         original = btns._DIRECT_AVAILABLE
-        original_is = btns._is_in_standby
         original_wake = btns._wake_from_standby
+        original_run = btns._run_cmd
         btns._DIRECT_AVAILABLE = True
-        btns._is_in_standby = MagicMock(return_value=False)
         mock_wake = MagicMock()
+        mock_run = MagicMock()
         btns._wake_from_standby = mock_wake
-        btns.action_power_press()
+        btns._run_cmd = mock_run
+        # action_power_press uses core.hardware.get_standby_state() internally
+        with patch("core.hardware.get_standby_state", return_value="awake"):
+            btns.action_power_press()
         mock_wake.assert_not_called()
         btns._DIRECT_AVAILABLE = original
-        btns._is_in_standby = original_is
         btns._wake_from_standby = original_wake
+        btns._run_cmd = original_run
 
     def test_action_volume_up_respects_parental_control(self):
         """action_volume_up non deve superare parental_control.max_volume."""

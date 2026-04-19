@@ -43,7 +43,7 @@
           <span class="nav-label">Story Studio</span>
         </button>
 
-        <button @click="currentTab = 'parental'" :class="{ active: currentTab === 'parental' }"
+        <button @click="currentTab = 'parental'" :class="{ active: currentTab === 'parental' }">
           <span class="nav-icon">🛡️</span>
           <span class="nav-label">Parental</span>
         </button>

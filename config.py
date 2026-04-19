@@ -103,6 +103,16 @@ SESSION_COOKIE_SAMESITE = os.environ.get("GUFOBOX_COOKIE_SAMESITE", "Lax")
 OFFLINE_FALLBACK_DIR = os.path.join(DATA_DIR, "offline_content")
 os.makedirs(OFFLINE_FALLBACK_DIR, exist_ok=True)
 
+# Story Studio
+STORY_STUDIO_DIR = os.path.join(DATA_DIR, "story_studio")
+STORY_STUDIO_STORIES_DIR = os.path.join(STORY_STUDIO_DIR, "stories")
+STORY_STUDIO_SFX_DIR = os.path.join(STORY_STUDIO_DIR, "sfx")
+STORY_STUDIO_MUSIC_DIR = os.path.join(STORY_STUDIO_DIR, "music")
+STORY_STUDIO_OUTPUT_DIR = os.path.join(MEDIA_ROOT, "storie_studio")
+for _ss_p in [STORY_STUDIO_STORIES_DIR, STORY_STUDIO_SFX_DIR,
+              STORY_STUDIO_MUSIC_DIR, STORY_STUDIO_OUTPUT_DIR]:
+    os.makedirs(_ss_p, exist_ok=True)
+
 # Offline TTS / Piper
 PIPER_SETTINGS_FILE = os.path.join(DATA_DIR, "piper_settings.json")
 PIPER_TTS_CACHE_DIR = os.path.join(DATA_DIR, "piper_tts_cache")

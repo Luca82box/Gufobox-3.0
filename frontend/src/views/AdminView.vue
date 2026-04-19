@@ -38,6 +38,11 @@
           <span class="nav-label">Contenuti Offline</span>
         </button>
 
+        <button @click="currentTab = 'story-studio'" :class="{ active: currentTab === 'story-studio' }">
+          <span class="nav-icon">🎬</span>
+          <span class="nav-label">Story Studio</span>
+        </button>
+
         <button @click="currentTab = 'parental'" :class="{ active: currentTab === 'parental' }"
           <span class="nav-icon">🛡️</span>
           <span class="nav-label">Parental</span>
@@ -127,6 +132,8 @@
 
           <AdminOfflineContent v-if="currentTab === 'offline-content'" />
 
+          <AdminStoryStudio v-if="currentTab === 'story-studio'" />
+
           <AdminParental v-if="currentTab === 'parental'" />
 
           <AdminStats v-if="currentTab === 'stats'" />
@@ -169,6 +176,7 @@ import AdminFileManager from './admin/AdminFileManager.vue'
 import AdminVoiceRecord from './admin/AdminVoiceRecord.vue'
 import AdminOfflineVoice from './admin/AdminOfflineVoice.vue'
 import AdminOfflineContent from './admin/AdminOfflineContent.vue'
+import AdminStoryStudio from './admin/AdminStoryStudio.vue'
 import AdminParental from './admin/AdminParental.vue'
 import AdminStats from './admin/AdminStats.vue'
 import AdminAiSettings from './admin/AdminAiSettings.vue'

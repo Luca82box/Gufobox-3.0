@@ -46,6 +46,7 @@ from api.rss import rss_bp
 from api.audio import audio_bp
 from api.wizard import wizard_bp
 from api.tts import tts_bp
+from api.offline import offline_bp
 
 import os
 import signal
@@ -91,6 +92,7 @@ def create_app():
     app.register_blueprint(audio_bp, url_prefix='/api')
     app.register_blueprint(wizard_bp, url_prefix='/api')
     app.register_blueprint(tts_bp, url_prefix='/api')
+    app.register_blueprint(offline_bp, url_prefix='/api')
 
     # Inizializza lo stato di autenticazione dopo la registrazione dei Blueprint,
     # evitando effetti collaterali all'import di api/auth.py.

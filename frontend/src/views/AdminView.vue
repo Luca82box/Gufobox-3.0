@@ -33,7 +33,12 @@
           <span class="nav-label">Voce offline</span>
         </button>
 
-        <button @click="currentTab = 'parental'" :class="{ active: currentTab === 'parental' }">
+        <button @click="currentTab = 'offline-content'" :class="{ active: currentTab === 'offline-content' }">
+          <span class="nav-icon">📴</span>
+          <span class="nav-label">Contenuti Offline</span>
+        </button>
+
+        <button @click="currentTab = 'parental'" :class="{ active: currentTab === 'parental' }"
           <span class="nav-icon">🛡️</span>
           <span class="nav-label">Parental</span>
         </button>
@@ -120,6 +125,8 @@
 
           <AdminOfflineVoice v-if="currentTab === 'offline-voice'" />
 
+          <AdminOfflineContent v-if="currentTab === 'offline-content'" />
+
           <AdminParental v-if="currentTab === 'parental'" />
 
           <AdminStats v-if="currentTab === 'stats'" />
@@ -161,6 +168,7 @@ import AdminMediaStatuine from './admin/AdminMediaStatuine.vue'
 import AdminFileManager from './admin/AdminFileManager.vue'
 import AdminVoiceRecord from './admin/AdminVoiceRecord.vue'
 import AdminOfflineVoice from './admin/AdminOfflineVoice.vue'
+import AdminOfflineContent from './admin/AdminOfflineContent.vue'
 import AdminParental from './admin/AdminParental.vue'
 import AdminStats from './admin/AdminStats.vue'
 import AdminAiSettings from './admin/AdminAiSettings.vue'

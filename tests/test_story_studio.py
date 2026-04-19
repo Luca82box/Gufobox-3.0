@@ -327,7 +327,7 @@ class TestStoryEngine:
 
     def test_delete_story(self, tmp_path):
         from core.story_engine import delete_story
-        sid = "delet0000-0000-0000-0000-000000000000"
+        sid = "de1e0000-0000-0000-0000-000000000000"
         d = tmp_path / sid
         d.mkdir()
         meta = {"id": sid, "title": "X", "output_path": None}
@@ -340,7 +340,7 @@ class TestStoryEngine:
     def test_delete_story_not_found(self, tmp_path):
         from core.story_engine import delete_story
         with patch("core.story_engine.STORY_STUDIO_STORIES_DIR", str(tmp_path)):
-            assert delete_story("notexist-0000-0000-0000-000000000000") is False
+            assert delete_story("00000000-0000-0000-0000-000000000000") is False
 
 
 # ===========================================================================

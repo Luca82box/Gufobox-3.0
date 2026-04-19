@@ -51,6 +51,13 @@ DURATIONS = {
 _active_generations: dict = {}
 _gen_lock = threading.Lock()
 
+_UUID_RE = re.compile(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+    re.IGNORECASE,
+)
+
+ESTIMATED_WPM = 150  # Parole al minuto stimate per il calcolo della durata
+
 
 # ===========================================================================
 # FASE 1 — GENERAZIONE SCRIPT GPT-4
@@ -211,7 +218,7 @@ def synthesize_lines(client, script: dict, story_dir: str,
             tts_resp.stream_to_file(filepath)
 
         word_count = len(text.split())
-        duration_ms = int(word_count / 150 * 60 * 1000)
+        duration_ms = int(word_count / ESTIMATED_WPM * 60 * 1000)
 
         results.append({
             "path":        filepath,
@@ -431,7 +438,15 @@ def finalize_story(story_id: str, story_dir: str, script: dict,
     safe_title = re.sub(r"[\s_-]+", "_", safe_title).strip("_") or story_id[:8]
 
     output_filename = f"{safe_title}_{story_id[:8]}.mp3"
-    output_dest = os.path.join(STORY_STUDIO_OUTPUT_DIR, output_filename)
+    _candidate = os.path.join(STORY_STUDIO_OUTPUT_DIR, output_filename)
+    # Path containment: ensure the resolved path stays within the output directory
+    _real_out_dir = os.path.realpath(STORY_STUDIO_OUTPUT_DIR)
+    _real_candidate = os.path.realpath(_candidate)
+    if not _real_candidate.startswith(_real_out_dir + os.sep) and _real_candidate != _real_out_dir:
+        log(f"Path traversal bloccato per output_dest: {_real_candidate}", "warning")
+        output_dest = None
+    else:
+        output_dest = _candidate
     try:
         if os.path.isfile(final_path):
             shutil.copy2(final_path, output_dest)
@@ -473,6 +488,11 @@ def run_story_pipeline(story_id: str, params: dict) -> None:
     from api.ai import get_openai_client
     from core.extensions import socketio
 
+    # Validate story_id is a well-formed UUID to prevent path traversal
+    if not _UUID_RE.match(story_id):
+        log(f"Story pipeline: story_id non valido ignorato: {story_id!r}", "error")
+        return
+
     title          = params.get("title", "Storia senza titolo")
     prompt         = params.get("prompt", "")
     age_group      = params.get("age_group", "bambino")
@@ -482,7 +502,15 @@ def run_story_pipeline(story_id: str, params: dict) -> None:
     enable_music   = params.get("enable_music", True)
     characters     = params.get("characters") or None
 
-    story_dir  = os.path.join(STORY_STUDIO_STORIES_DIR, story_id)
+    _candidate_dir = os.path.join(STORY_STUDIO_STORIES_DIR, story_id)
+    # Path containment: ensure story_dir stays within the stories directory
+    _real_stories_dir = os.path.realpath(STORY_STUDIO_STORIES_DIR)
+    _real_story_dir   = os.path.realpath(_candidate_dir)
+    if not _real_story_dir.startswith(_real_stories_dir + os.sep):
+        log(f"Story pipeline: path traversal bloccato per story_dir: {_real_story_dir}", "error")
+        return
+
+    story_dir  = _candidate_dir
     meta_path  = os.path.join(story_dir, "metadata.json")
     os.makedirs(story_dir, exist_ok=True)
 
@@ -576,12 +604,30 @@ def start_generation(params: dict) -> str:
     return story_id
 
 
+def _safe_story_dir(story_id: str) -> str | None:
+    """Costruisce e valida il path della directory storia. Ritorna None se non valido."""
+    if not _UUID_RE.match(story_id):
+        return None
+    candidate = os.path.join(STORY_STUDIO_STORIES_DIR, story_id)
+    real_base  = os.path.realpath(STORY_STUDIO_STORIES_DIR)
+    real_cand  = os.path.realpath(candidate)
+    if not real_cand.startswith(real_base + os.sep):
+        return None
+    return candidate
+
+
 def list_stories() -> list:
     stories = []
     if not os.path.isdir(STORY_STUDIO_STORIES_DIR):
         return stories
-    for story_id in os.listdir(STORY_STUDIO_STORIES_DIR):
-        meta_path = os.path.join(STORY_STUDIO_STORIES_DIR, story_id, "metadata.json")
+    real_base = os.path.realpath(STORY_STUDIO_STORIES_DIR)
+    for entry in os.listdir(STORY_STUDIO_STORIES_DIR):
+        story_dir_path = os.path.join(STORY_STUDIO_STORIES_DIR, entry)
+        # Only process directories that are direct children of the stories dir
+        real_entry = os.path.realpath(story_dir_path)
+        if not real_entry.startswith(real_base + os.sep):
+            continue
+        meta_path = os.path.join(story_dir_path, "metadata.json")
         if os.path.isfile(meta_path):
             try:
                 with open(meta_path, encoding="utf-8") as f:
@@ -593,7 +639,10 @@ def list_stories() -> list:
 
 
 def get_story(story_id: str) -> dict | None:
-    meta_path = os.path.join(STORY_STUDIO_STORIES_DIR, story_id, "metadata.json")
+    story_dir = _safe_story_dir(story_id)
+    if story_dir is None:
+        return None
+    meta_path = os.path.join(story_dir, "metadata.json")
     if not os.path.isfile(meta_path):
         return None
     try:
@@ -604,7 +653,10 @@ def get_story(story_id: str) -> dict | None:
 
 
 def get_story_script(story_id: str) -> dict | None:
-    script_path = os.path.join(STORY_STUDIO_STORIES_DIR, story_id, "script.json")
+    story_dir = _safe_story_dir(story_id)
+    if story_dir is None:
+        return None
+    script_path = os.path.join(story_dir, "script.json")
     if not os.path.isfile(script_path):
         return None
     try:
@@ -615,8 +667,8 @@ def get_story_script(story_id: str) -> dict | None:
 
 
 def delete_story(story_id: str) -> bool:
-    story_dir = os.path.join(STORY_STUDIO_STORIES_DIR, story_id)
-    if not os.path.isdir(story_dir):
+    story_dir = _safe_story_dir(story_id)
+    if story_dir is None or not os.path.isdir(story_dir):
         return False
     meta = get_story(story_id)
     if meta and meta.get("output_path") and os.path.isfile(meta["output_path"]):

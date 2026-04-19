@@ -23,10 +23,11 @@ from urllib.parse import urlparse
 from flask import Blueprint, request, jsonify
 
 from core.state import rfid_profiles, media_runtime, rss_runtime, bus, save_json_direct
-from config import RFID_PROFILES_FILE
+from config import RFID_PROFILES_FILE, OFFLINE_FALLBACK_DIR
 from core.utils import log
 from core.event_log import log_event
 from core.edu_config import VALID_AGE_GROUPS, VALID_ACTIVITY_MODES, VALID_LANGUAGE_TARGETS
+from core.connectivity import has_internet, has_openai
 
 rfid_bp = Blueprint("rfid", __name__)
 
@@ -364,6 +365,9 @@ def validate_rfid_profile(data, update=False):
     if not update and mode in _EXPERIENCE_AUDIO_MODES and not folder:
         errors.append(f"folder è obbligatorio per mode={mode}")
 
+    # offline_folder (opzionale): cartella locale con contenuti di fallback offline
+    offline_folder = str(data.get("offline_folder", "")).strip()
+
     if errors:
         return None, "; ".join(errors)
 
@@ -386,6 +390,7 @@ def validate_rfid_profile(data, update=False):
         "edu_config": edu_config,
         "activity_config": activity_config,
         "recording_path": recording_path,
+        "offline_folder": offline_folder,
         "updated_at": int(time.time()),
     }
     return profile, None
@@ -557,6 +562,58 @@ def handle_rfid_trigger(rfid_code: str) -> bool:
 
 
 # =========================================================
+# OFFLINE FALLBACK HELPER
+# =========================================================
+def _offline_fallback(rfid_code, profile, mode):
+    """
+    Tenta il fallback offline: riproduce contenuti dalla offline_folder del profilo
+    o dalla cartella di default OFFLINE_FALLBACK_DIR/{mode}/.
+    Ritorna (success: bool, response_data: dict).
+    """
+    from core.media import start_player, build_playlist
+
+    name = profile.get("name", rfid_code)
+
+    # 1. Cerca prima offline_folder del profilo
+    folder = profile.get("offline_folder", "").strip()
+
+    # 2. Fallback alla cartella di default per la modalità
+    if not folder:
+        folder = os.path.join(OFFLINE_FALLBACK_DIR, mode)
+
+    playlist = build_playlist(folder) if folder else []
+
+    if not playlist:
+        msg = f"📴 {name} — Nessun contenuto offline disponibile"
+        bus.emit_notification(msg, "warning")
+        log(f"Fallback offline: nessun contenuto trovato per mode={mode} rfid={rfid_code}", "warning")
+        log_event("rfid", "warning", "Nessun contenuto offline disponibile", {
+            "rfid_code": rfid_code, "profile_name": name, "mode": mode, "folder": folder,
+        })
+        return False, {"error": "Nessun contenuto offline disponibile"}
+
+    success, msg_player = start_player(
+        playlist[0],
+        mode="audio_only",
+        rfid_uid=rfid_code,
+        playlist_index=0,
+        profile_name=name,
+        profile_mode=mode,
+        volume=profile.get("volume"),
+    )
+    if not success:
+        bus.emit_notification(f"📴 {name} — Errore riproduzione offline", "error")
+        return False, {"error": msg_player}
+
+    media_runtime["current_playlist"] = playlist
+    bus.emit_notification(f"📴 {name} — Modalità offline (contenuti locali)", "info")
+    log_event("rfid", "info", "Fallback offline attivato", {
+        "rfid_code": rfid_code, "profile_name": name, "mode": mode, "folder": folder,
+    })
+    return True, {"status": "ok", "mode": mode, "offline": True, "folder": folder, "playing": playlist[0]}
+
+
+# =========================================================
 # BUSINESS LOGIC (indipendente da Flask — usata da handle_rfid_trigger e _trigger_*)
 # =========================================================
 def _exec_media_folder(rfid_code, profile):
@@ -596,6 +653,10 @@ def _exec_webradio(rfid_code, profile):
     """Logica pura per mode=webradio."""
     from core.media import start_player
 
+    if not has_internet():
+        ok, _ = _offline_fallback(rfid_code, profile, "webradio")
+        return ok
+
     url = profile.get("webradio_url", "")
     if not url:
         return False
@@ -613,6 +674,10 @@ def _exec_webradio(rfid_code, profile):
 
 def _exec_web_media(rfid_code, profile):
     """Logica pura per mode=web_media."""
+    if not has_internet():
+        ok, _ = _offline_fallback(rfid_code, profile, "web_media")
+        return ok
+
     url = profile.get("web_media_url", "")
     if not url:
         return False
@@ -667,6 +732,10 @@ def _exec_ai_chat(rfid_code, profile):
     """Logica pura per mode=ai_chat."""
     from core.state import ai_runtime
 
+    if not has_openai():
+        ok, _ = _offline_fallback(rfid_code, profile, "ai_chat")
+        return ok
+
     ai_runtime["active_rfid"] = rfid_code
     ai_runtime["active_profile_name"] = profile.get("name", "")
     ai_runtime["extra_prompt"] = profile.get("ai_prompt", "")
@@ -684,6 +753,10 @@ def _exec_ai_chat(rfid_code, profile):
 
 def _exec_rss_feed(rfid_code, profile):
     """Logica pura per mode=rss_feed."""
+    if not has_internet():
+        ok, _ = _offline_fallback(rfid_code, profile, "rss_feed")
+        return ok
+
     rss_url = profile.get("rss_url", "")
     rss_limit = profile.get("rss_limit", 10)
     if not rss_url:
@@ -715,6 +788,10 @@ def _exec_rss_feed(rfid_code, profile):
 def _exec_edu_ai(rfid_code, profile):
     """Logica pura per mode=edu_ai."""
     from core.state import ai_runtime
+
+    if not has_openai():
+        ok, _ = _offline_fallback(rfid_code, profile, "edu_ai")
+        return ok
 
     edu_config = profile.get("edu_config")
     if not edu_config:
@@ -766,6 +843,11 @@ def _exec_wizard(rfid_code, profile):
     from core.wizard import wizard_start
 
     mode = profile.get("mode")
+
+    if not has_openai():
+        ok, _ = _offline_fallback(rfid_code, profile, mode)
+        return ok
+
     media_runtime["current_rfid"] = rfid_code
     media_runtime["current_profile_name"] = profile.get("name")
     media_runtime["current_mode"] = mode
@@ -888,6 +970,11 @@ def _exec_experience_ai(rfid_code, profile):
     personalized_story, playful_english.
     """
     mode = profile.get("mode", "adventure")
+
+    if not has_openai():
+        ok, _ = _offline_fallback(rfid_code, profile, mode)
+        return ok
+
     ok, result = _apply_experience_ai_to_runtime(rfid_code, profile)
     if not ok:
         return False
@@ -1020,6 +1107,12 @@ def _trigger_webradio(rfid_code, profile):
     """mode=webradio: avvia stream URL."""
     from core.media import start_player
 
+    if not has_internet():
+        ok, data = _offline_fallback(rfid_code, profile, "webradio")
+        if ok:
+            return jsonify(data)
+        return jsonify(data), 503
+
     url = profile.get("webradio_url", "")
     if not url:
         return jsonify({"error": "webradio_url non specificato"}), 400
@@ -1048,6 +1141,12 @@ def _trigger_web_media(rfid_code, profile):
     (fetch del feed e salvataggio nello stato runtime).
     Per tutti gli altri tipi, l'URL viene passato direttamente a MPV/yt-dlp.
     """
+    if not has_internet():
+        ok, data = _offline_fallback(rfid_code, profile, "web_media")
+        if ok:
+            return jsonify(data)
+        return jsonify(data), 503
+
     url = profile.get("web_media_url", "")
     if not url:
         return jsonify({"error": "web_media_url non specificato"}), 400
@@ -1136,6 +1235,12 @@ def _trigger_ai_chat(rfid_code, profile):
     """mode=ai_chat: attiva modalità AI con prompt del profilo."""
     from core.state import ai_runtime
 
+    if not has_openai():
+        ok, data = _offline_fallback(rfid_code, profile, "ai_chat")
+        if ok:
+            return jsonify(data)
+        return jsonify(data), 503
+
     ai_runtime["active_rfid"] = rfid_code
     ai_runtime["active_profile_name"] = profile.get("name", "")
     ai_runtime["extra_prompt"] = profile.get("ai_prompt", "")
@@ -1161,6 +1266,12 @@ def _trigger_ai_chat(rfid_code, profile):
 
 def _trigger_rss_feed(rfid_code, profile):
     """mode=rss_feed: fetch feed RSS e salva stato runtime."""
+    if not has_internet():
+        ok, data = _offline_fallback(rfid_code, profile, "rss_feed")
+        if ok:
+            return jsonify(data)
+        return jsonify(data), 503
+
     rss_url = profile.get("rss_url", "")
     rss_limit = profile.get("rss_limit", 10)
 
@@ -1205,6 +1316,12 @@ def _trigger_edu_ai(rfid_code, profile):
     incoerenze di sessione, e aggiorna snapshot/runtime.
     """
     from core.state import ai_runtime
+
+    if not has_openai():
+        ok, data = _offline_fallback(rfid_code, profile, "edu_ai")
+        if ok:
+            return jsonify(data)
+        return jsonify(data), 503
 
     edu_config = profile.get("edu_config")
     if not edu_config:
@@ -1291,6 +1408,12 @@ def _trigger_wizard(rfid_code, profile):
 
     mode = profile.get("mode")  # "school" or "entertainment"
 
+    if not has_openai():
+        ok, data = _offline_fallback(rfid_code, profile, mode)
+        if ok:
+            return jsonify(data)
+        return jsonify(data), 503
+
     # Update media_runtime snapshot so frontend knows wizard is active
     media_runtime["current_rfid"] = rfid_code
     media_runtime["current_profile_name"] = profile.get("name")
@@ -1368,6 +1491,13 @@ def _trigger_experience_ai(rfid_code, profile):
     personalized_story, playful_english.
     """
     mode = profile.get("mode", "adventure")
+
+    if not has_openai():
+        ok, data = _offline_fallback(rfid_code, profile, mode)
+        if ok:
+            return jsonify(data)
+        return jsonify(data), 503
+
     ok, result = _apply_experience_ai_to_runtime(rfid_code, profile)
     if not ok:
         return jsonify({"error": result.get("error", "Errore attivazione")}), 500

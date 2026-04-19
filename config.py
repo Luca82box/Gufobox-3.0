@@ -99,6 +99,10 @@ LED_CHANNEL    = int(os.environ.get("GUFOBOX_LED_CHANNEL", "0"))
 SESSION_COOKIE_SECURE = os.environ.get("GUFOBOX_COOKIE_SECURE", "0") == "1"
 SESSION_COOKIE_SAMESITE = os.environ.get("GUFOBOX_COOKIE_SAMESITE", "Lax")
 
+# Cartella di fallback offline per contenuti preimpostati
+OFFLINE_FALLBACK_DIR = os.path.join(DATA_DIR, "offline_content")
+os.makedirs(OFFLINE_FALLBACK_DIR, exist_ok=True)
+
 # Offline TTS / Piper
 PIPER_SETTINGS_FILE = os.path.join(DATA_DIR, "piper_settings.json")
 PIPER_TTS_CACHE_DIR = os.path.join(DATA_DIR, "piper_tts_cache")

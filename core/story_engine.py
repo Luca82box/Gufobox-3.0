@@ -42,9 +42,10 @@ OPENAI_VOICES = {
 AGE_GROUPS = ["bambino", "ragazzo", "adulto"]
 
 DURATIONS = {
-    "short":  {"label": "Breve (2-3 min)",   "lines": 10},
-    "medium": {"label": "Media (5-7 min)",   "lines": 25},
-    "long":   {"label": "Lunga (10-15 min)", "lines": 50},
+    "short":  {"label": "Breve (5-7 min)",   "lines": 25},
+    "medium": {"label": "Media (10-15 min)", "lines": 50},
+    "long":   {"label": "Lunga (20-25 min)", "lines": 80},
+    "extra":  {"label": "Extra (30-35 min)", "lines": 120},
 }
 
 # Generazioni attive: {story_id: thread}

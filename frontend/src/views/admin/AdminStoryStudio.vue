@@ -39,9 +39,10 @@
         <div class="form-group">
           <label>Durata</label>
           <select v-model="form.duration" class="input-field">
-            <option value="short">⚡ Breve (2-3 min)</option>
-            <option value="medium">📖 Media (5-7 min)</option>
-            <option value="long">📚 Lunga (10-15 min)</option>
+            <option value="short">⚡ Breve (5-7 min)</option>
+            <option value="medium">📖 Media (10-15 min)</option>
+            <option value="long">📚 Lunga (20-25 min)</option>
+            <option value="extra">🎬 Extra (30-35 min)</option>
           </select>
         </div>
         <div class="form-group">

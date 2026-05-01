@@ -46,23 +46,69 @@
               <code>https://github.com/rhasspy/piper/releases</code>
               (RPi 4/5 a 64-bit: <code>piper_linux_aarch64.tar.gz</code>)
             </li>
-            <li>Estrai e copia <code>piper</code> in <code>/usr/local/bin/</code></li>
+            <li>Estrai il file <code>piper</code> dall'archivio</li>
+            <li>
+              Caricalo qui sotto con il pulsante <strong>Carica binario Piper</strong>,
+              oppure copialo manualmente in <code>/usr/local/bin/</code>
+            </li>
             <li>
               Scarica un modello voce (.onnx + .onnx.json) da
               <code>https://huggingface.co/rhasspy/piper-voices</code>
             </li>
             <li>
-              Copia i file nella cartella <code>data/piper_voices/</code>
-              (es. <code>it_IT-paola-medium.onnx</code>)
-            </li>
-            <li>
-              Oppure imposta <code>GUFOBOX_PIPER_BIN</code> nel file <code>.env</code>
-              se il binario è in un percorso diverso.
+              Carica i file nella sezione <strong>Carica file voce Piper</strong> qui sotto.
             </li>
           </ol>
         </div>
       </div>
       <button class="btn-secondary" @click="loadStatus">🔄 Ricarica stato</button>
+    </div>
+
+    <!-- Piper binary upload card -->
+    <div class="card">
+      <h3>⚙️ Carica binario Piper</h3>
+      <p class="hint">
+        Carica il file eseguibile <code>piper</code> direttamente dal browser
+        (estratto da <code>piper_linux_aarch64.tar.gz</code> o equivalente).
+        Il binario viene salvato in <code>data/piper_bin/piper</code> e reso eseguibile.
+      </p>
+
+      <div v-if="status?.piper_local_bin_exists" class="banner banner-success mt-small">
+        ✅ Binario locale presente: <code>{{ status.piper_local_bin }}</code>
+      </div>
+
+      <div class="form-group" style="margin-top:12px;">
+        <label>Seleziona file eseguibile Piper</label>
+        <input
+          ref="binaryInputRef"
+          type="file"
+          class="file-input"
+          @change="onBinarySelected"
+        />
+        <p v-if="selectedBinary" class="hint">
+          File selezionato: {{ selectedBinary.name }}
+          ({{ formatBytes(selectedBinary.size) }})
+        </p>
+      </div>
+
+      <div class="form-actions">
+        <button
+          class="btn-upload"
+          @click="uploadPiperBinary"
+          :disabled="uploadingBinary || !selectedBinary"
+        >
+          {{ uploadingBinary ? '⏳ Caricamento...' : '⚙️ Carica binario' }}
+        </button>
+      </div>
+
+      <div v-if="binaryUploadResult" class="upload-results">
+        <div
+          class="upload-result-item"
+          :class="binaryUploadResult.ok ? 'result-ok' : 'result-err'"
+        >
+          {{ binaryUploadResult.ok ? '✅' : '❌' }} {{ binaryUploadResult.message }}
+        </div>
+      </div>
     </div>
 
     <!-- OpenAI key card — interactive entry -->
@@ -339,6 +385,51 @@ async function uploadPiperFiles() {
     showError('Upload fallito — vedi dettagli sotto.')
   }
   await loadStatus()
+}
+
+// ── Piper binary upload ────────────────────────────────────────────────────
+const binaryInputRef = ref(null)
+const selectedBinary = ref(null)
+const uploadingBinary = ref(false)
+const binaryUploadResult = ref(null)
+
+function onBinarySelected(event) {
+  selectedBinary.value = event.target.files?.[0] || null
+  binaryUploadResult.value = null
+}
+
+function formatBytes(bytes) {
+  if (!bytes) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
+}
+
+async function uploadPiperBinary() {
+  if (!selectedBinary.value) return
+  uploadingBinary.value = true
+  binaryUploadResult.value = null
+  clearFeedback()
+  const formData = new FormData()
+  formData.append('file', selectedBinary.value)
+  try {
+    const api = getApi()
+    await guardedCall(() => api.post('/tts/offline/upload-binary', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }))
+    binaryUploadResult.value = { ok: true, message: 'Binario Piper caricato con successo.' }
+    showSuccess('Binario Piper caricato. Ricarica lo stato per verificare.')
+    selectedBinary.value = null
+    if (binaryInputRef.value) binaryInputRef.value.value = ''
+    await loadStatus()
+  } catch (e) {
+    const msg = extractApiError(e, 'Errore upload binario')
+    binaryUploadResult.value = { ok: false, message: msg }
+    showError(msg)
+  } finally {
+    uploadingBinary.value = false
+  }
 }
 
 // ── Settings ───────────────────────────────────────────────────────────────

@@ -120,7 +120,18 @@ PIPER_TTS_CACHE_DIR = os.path.join(DATA_DIR, "piper_tts_cache")
 PIPER_VOICES_DIR = os.environ.get(
     "GUFOBOX_PIPER_VOICES_DIR", os.path.join(DATA_DIR, "piper_voices")
 )
-# Path to the piper binary (default: search in PATH)
-PIPER_EXECUTABLE = os.environ.get("GUFOBOX_PIPER_BIN", "piper")
+# Directory where an uploaded Piper binary is stored
+PIPER_LOCAL_BIN_DIR = os.path.join(DATA_DIR, "piper_bin")
+# Uploaded binary name (placed inside PIPER_LOCAL_BIN_DIR)
+PIPER_LOCAL_BIN = os.path.join(PIPER_LOCAL_BIN_DIR, "piper")
+# Path to the piper binary: prefer locally uploaded binary, then env var, then PATH
+_piper_bin_env = os.environ.get("GUFOBOX_PIPER_BIN", "")
+if _piper_bin_env:
+    PIPER_EXECUTABLE = _piper_bin_env
+elif os.path.isfile(PIPER_LOCAL_BIN) and os.access(PIPER_LOCAL_BIN, os.X_OK):
+    PIPER_EXECUTABLE = PIPER_LOCAL_BIN
+else:
+    PIPER_EXECUTABLE = "piper"
 os.makedirs(PIPER_TTS_CACHE_DIR, exist_ok=True)
 os.makedirs(PIPER_VOICES_DIR, exist_ok=True)
+os.makedirs(PIPER_LOCAL_BIN_DIR, exist_ok=True)

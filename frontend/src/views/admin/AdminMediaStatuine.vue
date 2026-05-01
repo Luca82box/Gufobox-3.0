@@ -56,6 +56,10 @@
                 <option value="playful_english">🇬🇧 Inglese Giocoso</option>
                 <option value="logic_games">🧩 Giochi Logici Semplici</option>
               </optgroup>
+              <optgroup label="🎙️ Voce">
+                <option value="voice_recording">🎙️ Riproduci Registrazione</option>
+                <option value="record_voice">🎤 Registro Voce (registra il bambino)</option>
+              </optgroup>
             </select>
           </div>
           <div class="form-group form-group-inline">
@@ -267,6 +271,36 @@
           </div>
         </div>
 
+        <!-- VOICE RECORDING — playback mode -->
+        <div v-if="form.mode === 'voice_recording'" class="mode-section">
+          <h4>🎙️ Riproduci Registrazione Vocale</h4>
+          <p class="mode-hint">Quando la statuina viene avvicinata, verrà riprodotta la registrazione vocale selezionata.</p>
+          <div class="form-group form-group-full">
+            <label>Percorso registrazione (file .wav / .ogg / .mp3)</label>
+            <input type="text" v-model="form.recording_path" placeholder="/home/gufobox/media/registrazioni/mia-voce.wav" />
+          </div>
+          <div v-if="form.recording_path" class="mode-hint">
+            📄 File: <code>{{ form.recording_path }}</code>
+          </div>
+          <div class="form-group">
+            <label>Volume {{ form.volume }}%</label>
+            <input type="range" min="0" max="100" v-model.number="form.volume" />
+          </div>
+        </div>
+
+        <!-- RECORD VOICE — capture mode -->
+        <div v-if="form.mode === 'record_voice'" class="mode-section">
+          <h4>🎤 Registro Voce</h4>
+          <p class="mode-hint">
+            Quando il bambino avvicina questa statuina, il dispositivo mostra la schermata di
+            <strong>registrazione vocale</strong>. Il bambino potrà registrare la sua voce e
+            il file verrà salvato automaticamente in <code>media/registrazioni/</code>.
+          </p>
+          <p class="mode-hint" style="color:#ffd27b">
+            💡 Nessuna configurazione aggiuntiva richiesta. La registrazione parte automaticamente al tocco della statuina.
+          </p>
+        </div>
+
         <!-- OFFLINE FALLBACK FOLDER (for all network-dependent modes) -->
         <div v-if="isNetworkMode" class="mode-section offline-section">
           <h4>📴 Cartella fallback offline (opzionale)</h4>
@@ -423,6 +457,42 @@
       </div>
     </div>
 
+    <!-- ═══════════════════════════════════════
+         SIMULAZIONE STATUINE
+    ═══════════════════════════════════════ -->
+    <div class="rfid-list-card card">
+      <div class="list-header">
+        <h3>🎮 Simula Statuine</h3>
+        <button class="btn-refresh" @click="loadProfiles">🔄</button>
+      </div>
+      <p class="sim-hint">
+        Avvia qualsiasi statuina direttamente dal pannello admin — senza avvicinarla fisicamente.
+        Utile per testare, dimostrare e verificare la configurazione.
+      </p>
+      <div v-if="loading" class="loading-state">Caricamento... ⏳</div>
+      <div v-else-if="profiles.length === 0" class="empty-state">
+        Nessun profilo configurato.
+      </div>
+      <div v-else class="sim-grid">
+        <button
+          v-for="p in profiles"
+          :key="p.rfid_code"
+          class="sim-btn"
+          :class="{ 'sim-btn--active': currentRfid?.current_rfid === p.rfid_code, 'sim-btn--disabled': !p.enabled }"
+          :disabled="!p.enabled || isTriggeringCode === p.rfid_code"
+          @click="triggerProfileSim(p.rfid_code)"
+          :title="p.enabled ? `Simula: ${p.rfid_code}` : 'Profilo disabilitato'"
+        >
+          <span class="sim-icon">{{ modeIcon(p.mode) }}</span>
+          <span class="sim-name">{{ p.name }}</span>
+          <span class="sim-mode">{{ modeLabel(p.mode) }}</span>
+          <span v-if="isTriggeringCode === p.rfid_code" class="sim-loading">⏳</span>
+          <span v-else-if="currentRfid?.current_rfid === p.rfid_code" class="sim-active-dot">▶</span>
+          <span v-if="!p.enabled" class="sim-disabled-label">⛔ OFF</span>
+        </button>
+      </div>
+    </div>
+
   </div>
 </template>
 
@@ -469,6 +539,7 @@ const FORM_DEFAULT = () => ({
   edu_config: EDU_CONFIG_DEFAULT(),
   activity_config: ACTIVITY_CONFIG_DEFAULT(),
   offline_folder: '',
+  recording_path: '',
   led: { enabled: false, effect_id: 'solid', color: '#ffffff', brightness: 70, speed: 30 },
 })
 const form = reactive(FORM_DEFAULT())
@@ -635,6 +706,21 @@ async function triggerProfile(code) {
   }
 }
 
+const isTriggeringCode = ref(null)
+
+async function triggerProfileSim(code) {
+  isTriggeringCode.value = code
+  try {
+    await guardedCall(() => getApi().post('/rfid/trigger', { rfid_code: code }))
+    await loadCurrentRfid()
+    showSuccess(`▶️ Statuina "${code}" avviata.`)
+  } catch (e) {
+    showError(extractApiError(e, 'Errore simulazione statuina'))
+  } finally {
+    isTriggeringCode.value = null
+  }
+}
+
 function editProfile(p) {
   isEditing.value = true
   Object.assign(form, FORM_DEFAULT())
@@ -674,6 +760,7 @@ function modeIcon(m) {
     adventure: '🗺️', spoken_quiz: '🎤', karaoke: '🎵', guess_sound: '🔊',
     personalized_story: '📖', bedtime: '🌙', imitate: '🎭',
     playful_english: '🇬🇧', logic_games: '🧩',
+    voice_recording: '🎙️', record_voice: '🎤',
   }
   return icons[m] || '🏷️'
 }
@@ -685,6 +772,7 @@ function modeLabel(m) {
     guess_sound: 'Indovina il Suono', personalized_story: 'Favole Personalizzate',
     bedtime: 'Buonanotte / Rilassamento', imitate: 'Modalità Imita',
     playful_english: 'Inglese Giocoso', logic_games: 'Giochi Logici Semplici',
+    voice_recording: 'Riproduci Registrazione', record_voice: 'Registro Voce',
   }
   return labels[m] || m
 }
@@ -701,6 +789,8 @@ function profileTarget(p) {
   if (p.mode === 'school') return 'Avvia wizard Scuola'
   if (p.mode === 'entertainment') return 'Avvia wizard Intrattenimento'
   if (p.mode === 'karaoke' || p.mode === 'bedtime') return p.folder || ''
+  if (p.mode === 'voice_recording') return p.recording_path || ''
+  if (p.mode === 'record_voice') return 'Registra voce bambino'
   if (EXPERIENCE_AI_MODES.has(p.mode) && p.activity_config) {
     const ac = p.activity_config
     const parts = [AGE_LABELS[ac.age_group] || ac.age_group]
@@ -892,6 +982,8 @@ onBeforeUnmount(() => {
 .mode-badge.imitate { background: #b71c1c; }
 .mode-badge.playful_english { background: #01579b; }
 .mode-badge.logic_games { background: #4e342e; }
+.mode-badge.voice_recording { background: #4a235a; }
+.mode-badge.record_voice { background: #1b3a5a; }
 .target-path { margin: 4px 0 0; font-size: .8rem; color: #aaa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .led-badge { margin: 4px 0 0; font-size: .8rem; color: #ffd27b; display: flex; align-items: center; gap: 5px; }
 .color-dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; border: 1px solid #555; }
@@ -915,4 +1007,24 @@ onBeforeUnmount(() => {
   cursor: pointer; transition: background .2s;
 }
 .btn-select-offline:hover { background: #795548; }
+
+/* Simulation panel */
+.sim-hint { color: #aaa; font-size: .88rem; margin: 0 0 14px; }
+.sim-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; margin-top: 10px; }
+.sim-btn {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  background: #1e1e26; border: 2px solid #3a3a48; border-radius: 14px;
+  padding: 16px 10px; cursor: pointer; transition: background .18s, border-color .18s, transform .15s;
+  color: #ddd; position: relative;
+}
+.sim-btn:hover:not(:disabled) { background: #2a2a38; border-color: #4caf50; transform: translateY(-2px); }
+.sim-btn:disabled { opacity: .5; cursor: not-allowed; }
+.sim-btn--active { border-color: #4caf50; background: #1a2a1a; }
+.sim-btn--disabled { opacity: .45; }
+.sim-icon { font-size: 2rem; }
+.sim-name { font-size: .9rem; font-weight: 700; color: #fff; text-align: center; line-height: 1.2; }
+.sim-mode { font-size: .75rem; color: #aaa; text-align: center; }
+.sim-loading { font-size: .85rem; color: #ffd27b; }
+.sim-active-dot { font-size: .8rem; color: #4caf50; position: absolute; top: 8px; right: 10px; }
+.sim-disabled-label { font-size: .72rem; color: #ff6b6b; }
 </style>

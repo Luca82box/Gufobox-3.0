@@ -26,6 +26,7 @@ import hashlib
 import os
 import re
 import subprocess
+import threading
 
 from flask import Blueprint, request, jsonify, send_file
 from werkzeug.utils import secure_filename
@@ -36,12 +37,17 @@ from config import (
     PIPER_SETTINGS_FILE,
     PIPER_TTS_CACHE_DIR,
     PIPER_VOICES_DIR,
-    PIPER_EXECUTABLE,
+    PIPER_LOCAL_BIN_DIR,
+    PIPER_LOCAL_BIN,
 )
+import config as _cfg
 from core.state import load_json, save_json_direct
 from core.utils import log
 
 tts_bp = Blueprint("tts", __name__)
+
+# Lock protecting _cfg.PIPER_EXECUTABLE updates at runtime (e.g. from binary upload)
+_piper_exe_lock = threading.Lock()
 
 # =========================================================
 # PIPER SETTINGS
@@ -75,9 +81,11 @@ def _save_piper_settings():
 
 def _piper_available():
     """Return True if the piper binary responds correctly."""
+    with _piper_exe_lock:
+        exe = _cfg.PIPER_EXECUTABLE
     try:
         r = subprocess.run(
-            [PIPER_EXECUTABLE, "--version"],
+            [exe, "--version"],
             capture_output=True,
             timeout=5,
         )
@@ -226,8 +234,10 @@ def synthesize_with_piper(text, voice=""):
         return out_path
 
     # Both model_path (from fs scan) and out_path (from hash) are safe
+    with _piper_exe_lock:
+        exe = _cfg.PIPER_EXECUTABLE
     cmd = [
-        PIPER_EXECUTABLE,
+        exe,
         "--model", model_path,
         "--output_file", out_path,
     ]
@@ -304,9 +314,13 @@ def synthesize_text(text, openai_client=None, openai_voice="nova"):
 @tts_bp.route("/tts/offline/status", methods=["GET"])
 def api_tts_offline_status():
     """Piper status: installed, available voices, cache stats."""
+    with _piper_exe_lock:
+        exe = _cfg.PIPER_EXECUTABLE
     return jsonify({
         "piper_available": _piper_available(),
-        "piper_executable": PIPER_EXECUTABLE,
+        "piper_executable": exe,
+        "piper_local_bin": PIPER_LOCAL_BIN,
+        "piper_local_bin_exists": os.path.isfile(PIPER_LOCAL_BIN),
         "voices_dir": PIPER_VOICES_DIR,
         "voices": _list_voices(),
         "cache": _piper_cache_stats(),
@@ -456,4 +470,51 @@ def api_tts_offline_upload():
         "status": "ok",
         "filename": safe_name,
         "voices": _list_voices(),
+    })
+
+
+@tts_bp.route("/tts/offline/upload-binary", methods=["POST"])
+def api_tts_offline_upload_binary():
+    """Upload the Piper binary executable to PIPER_LOCAL_BIN_DIR.
+
+    Accepts multipart/form-data with a single field named ``file``.
+    The uploaded file is saved as ``data/piper_bin/piper`` and made executable.
+    After upload _cfg.PIPER_EXECUTABLE is refreshed to point to the local binary.
+
+    This allows admins to provision Piper on platforms where automatic
+    download is not available (e.g. Raspberry Pi with no internet access).
+    """
+    if "file" not in request.files:
+        return jsonify({"error": "Nessun file nella richiesta"}), 400
+
+    upload = request.files["file"]
+    if not upload or not upload.filename:
+        return jsonify({"error": "File non valido"}), 400
+
+    # Guard against oversized uploads (reuse Piper max size — binary can be up to ~50 MB)
+    upload.seek(0, 2)
+    file_size = upload.tell()
+    upload.seek(0)
+    piper_max = _cfg.PIPER_MAX_UPLOAD_BYTES
+    if file_size > piper_max:
+        return jsonify({"error": f"File troppo grande (max {piper_max // (1024*1024)} MB)"}), 413
+
+    try:
+        os.makedirs(PIPER_LOCAL_BIN_DIR, exist_ok=True)
+        upload.save(PIPER_LOCAL_BIN)
+        # Make the binary executable (chmod +x)
+        current_mode = os.stat(PIPER_LOCAL_BIN).st_mode
+        os.chmod(PIPER_LOCAL_BIN, current_mode | 0o111)
+    except OSError as exc:
+        log(f"Piper binary upload error: {exc}", "error")
+        return jsonify({"error": "Errore durante il salvataggio del binario"}), 500
+
+    # Refresh the runtime executable path so subsequent calls use the new binary
+    with _piper_exe_lock:
+        _cfg.PIPER_EXECUTABLE = PIPER_LOCAL_BIN
+    log(f"Binario Piper caricato: {PIPER_LOCAL_BIN}", "info")
+    return jsonify({
+        "status": "ok",
+        "piper_executable": PIPER_LOCAL_BIN,
+        "piper_available": _piper_available(),
     })

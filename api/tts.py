@@ -26,6 +26,7 @@ import hashlib
 import os
 import re
 import subprocess
+import threading
 
 from flask import Blueprint, request, jsonify, send_file
 from werkzeug.utils import secure_filename
@@ -44,6 +45,9 @@ from core.state import load_json, save_json_direct
 from core.utils import log
 
 tts_bp = Blueprint("tts", __name__)
+
+# Lock protecting _cfg.PIPER_EXECUTABLE updates at runtime (e.g. from binary upload)
+_piper_exe_lock = threading.Lock()
 
 # =========================================================
 # PIPER SETTINGS
@@ -77,7 +81,8 @@ def _save_piper_settings():
 
 def _piper_available():
     """Return True if the piper binary responds correctly."""
-    exe = _cfg.PIPER_EXECUTABLE
+    with _piper_exe_lock:
+        exe = _cfg.PIPER_EXECUTABLE
     try:
         r = subprocess.run(
             [exe, "--version"],
@@ -229,7 +234,8 @@ def synthesize_with_piper(text, voice=""):
         return out_path
 
     # Both model_path (from fs scan) and out_path (from hash) are safe
-    exe = _cfg.PIPER_EXECUTABLE
+    with _piper_exe_lock:
+        exe = _cfg.PIPER_EXECUTABLE
     cmd = [
         exe,
         "--model", model_path,
@@ -308,9 +314,11 @@ def synthesize_text(text, openai_client=None, openai_voice="nova"):
 @tts_bp.route("/tts/offline/status", methods=["GET"])
 def api_tts_offline_status():
     """Piper status: installed, available voices, cache stats."""
+    with _piper_exe_lock:
+        exe = _cfg.PIPER_EXECUTABLE
     return jsonify({
         "piper_available": _piper_available(),
-        "piper_executable": _cfg.PIPER_EXECUTABLE,
+        "piper_executable": exe,
         "piper_local_bin": PIPER_LOCAL_BIN,
         "piper_local_bin_exists": os.path.isfile(PIPER_LOCAL_BIN),
         "voices_dir": PIPER_VOICES_DIR,
@@ -502,7 +510,8 @@ def api_tts_offline_upload_binary():
         return jsonify({"error": "Errore durante il salvataggio del binario"}), 500
 
     # Refresh the runtime executable path so subsequent calls use the new binary
-    _cfg.PIPER_EXECUTABLE = PIPER_LOCAL_BIN
+    with _piper_exe_lock:
+        _cfg.PIPER_EXECUTABLE = PIPER_LOCAL_BIN
     log(f"Binario Piper caricato: {PIPER_LOCAL_BIN}", "info")
     return jsonify({
         "status": "ok",

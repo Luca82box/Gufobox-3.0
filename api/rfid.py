@@ -997,14 +997,19 @@ def _exec_experience_ai(rfid_code, profile):
 
 
 def _exec_record_voice(rfid_code, profile):
-    """Logica pura per mode=record_voice: segnala al frontend di avviare la registrazione vocale."""
+    """Logica pura per mode=record_voice: segnala al frontend di avviare la registrazione vocale del bambino."""
+    _do_record_voice(rfid_code, profile)
+    return True
+
+
+def _do_record_voice(rfid_code, profile):
+    """Logica condivisa per record_voice: aggiorna runtime ed emette evento socket."""
     name = profile.get("name", rfid_code)
     media_runtime["current_rfid"] = rfid_code
     media_runtime["current_profile_name"] = name
     media_runtime["current_mode"] = "record_voice"
     bus.mark_dirty("media")
     bus.request_emit("public")
-    # Emette un evento socket dedicato per la cattura voce
     from core.extensions import socketio
     socketio.emit("voice_capture_requested", {
         "rfid_code": rfid_code,
@@ -1014,7 +1019,7 @@ def _exec_record_voice(rfid_code, profile):
         "rfid_code": rfid_code, "profile_name": name,
     })
     bus.emit_notification(f"🎤 {name} — Registra la tua voce!", "info")
-    return True
+    return name
 
 
 # =========================================================
@@ -1513,21 +1518,7 @@ def _trigger_voice_recording(rfid_code, profile):
 
 def _trigger_record_voice(rfid_code, profile):
     """mode=record_voice: segnala al frontend di avviare la registrazione vocale del bambino."""
-    name = profile.get("name", rfid_code)
-    media_runtime["current_rfid"] = rfid_code
-    media_runtime["current_profile_name"] = name
-    media_runtime["current_mode"] = "record_voice"
-    bus.mark_dirty("media")
-    bus.request_emit("public")
-    from core.extensions import socketio
-    socketio.emit("voice_capture_requested", {
-        "rfid_code": rfid_code,
-        "profile_name": name,
-    })
-    log_event("rfid", "info", "Registrazione voce richiesta via RFID", {
-        "rfid_code": rfid_code, "profile_name": name,
-    })
-    bus.emit_notification(f"🎤 {name} — Registra la tua voce!", "info")
+    name = _do_record_voice(rfid_code, profile)
     return jsonify({
         "status": "ok",
         "mode": "record_voice",

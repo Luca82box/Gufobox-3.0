@@ -251,6 +251,7 @@ async function uploadVoiceCapture() {
   voiceCapture.uploading = true
   const blob = new Blob(audioChunks, { type: 'audio/webm' })
   const formData = new FormData()
+  // slice(0, 19) keeps only 'YYYY-MM-DDTHH-MM-SS' for safe, filesystem-compatible filenames
   const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
   formData.append('file', blob, `registro-${voiceCapture.rfidCode || 'voce'}-${ts}.webm`)
   formData.append('role', 'bambino')

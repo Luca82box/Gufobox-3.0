@@ -40,6 +40,8 @@ VALID_MODES = {
     # New child interactive experience modes (PR 32+)
     "adventure", "spoken_quiz", "karaoke", "guess_sound",
     "personalized_story", "bedtime", "imitate", "playful_english", "logic_games",
+    # Child voice capture mode
+    "record_voice",
 }
 
 # New child experience modes that use the AI engine
@@ -549,6 +551,8 @@ def handle_rfid_trigger(rfid_code: str) -> bool:
             return _exec_wizard(rfid_code, profile)
         elif mode == "voice_recording":
             return _exec_voice_recording(rfid_code, profile)
+        elif mode == "record_voice":
+            return _exec_record_voice(rfid_code, profile)
         elif mode in _EXPERIENCE_AI_MODES:
             return _exec_experience_ai(rfid_code, profile)
         elif mode in _EXPERIENCE_AUDIO_MODES:
@@ -992,6 +996,27 @@ def _exec_experience_ai(rfid_code, profile):
     return True
 
 
+def _exec_record_voice(rfid_code, profile):
+    """Logica pura per mode=record_voice: segnala al frontend di avviare la registrazione vocale."""
+    name = profile.get("name", rfid_code)
+    media_runtime["current_rfid"] = rfid_code
+    media_runtime["current_profile_name"] = name
+    media_runtime["current_mode"] = "record_voice"
+    bus.mark_dirty("media")
+    bus.request_emit("public")
+    # Emette un evento socket dedicato per la cattura voce
+    from core.extensions import socketio
+    socketio.emit("voice_capture_requested", {
+        "rfid_code": rfid_code,
+        "profile_name": name,
+    })
+    log_event("rfid", "info", "Registrazione voce richiesta via RFID", {
+        "rfid_code": rfid_code, "profile_name": name,
+    })
+    bus.emit_notification(f"🎤 {name} — Registra la tua voce!", "info")
+    return True
+
+
 # =========================================================
 # TRIGGER
 # =========================================================
@@ -1044,6 +1069,8 @@ def api_rfid_trigger_profile():
         return _trigger_wizard(rfid_code, profile)
     elif mode == "voice_recording":
         return _trigger_voice_recording(rfid_code, profile)
+    elif mode == "record_voice":
+        return _trigger_record_voice(rfid_code, profile)
     elif mode in _EXPERIENCE_AI_MODES:
         return _trigger_experience_ai(rfid_code, profile)
     elif mode in _EXPERIENCE_AUDIO_MODES:
@@ -1481,6 +1508,31 @@ def _trigger_voice_recording(rfid_code, profile):
         "mode": "voice_recording",
         "profile_name": profile.get("name"),
         "recording_path": recording_path,
+    })
+
+
+def _trigger_record_voice(rfid_code, profile):
+    """mode=record_voice: segnala al frontend di avviare la registrazione vocale del bambino."""
+    name = profile.get("name", rfid_code)
+    media_runtime["current_rfid"] = rfid_code
+    media_runtime["current_profile_name"] = name
+    media_runtime["current_mode"] = "record_voice"
+    bus.mark_dirty("media")
+    bus.request_emit("public")
+    from core.extensions import socketio
+    socketio.emit("voice_capture_requested", {
+        "rfid_code": rfid_code,
+        "profile_name": name,
+    })
+    log_event("rfid", "info", "Registrazione voce richiesta via RFID", {
+        "rfid_code": rfid_code, "profile_name": name,
+    })
+    bus.emit_notification(f"🎤 {name} — Registra la tua voce!", "info")
+    return jsonify({
+        "status": "ok",
+        "mode": "record_voice",
+        "profile_name": name,
+        "rfid_code": rfid_code,
     })
 
 

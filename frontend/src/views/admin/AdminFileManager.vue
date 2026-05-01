@@ -697,9 +697,9 @@ onUnmounted(() => {
 .file-item.selected { background: #3a3a5c; }
 .file-item:last-child { border-bottom: none; }
 
-.entry-info { display: flex; align-items: center; gap: 8px; overflow: hidden; }
+.entry-info { display: flex; align-items: center; gap: 8px; overflow: hidden; min-width: 0; }
 .icon { font-size: 1.3rem; flex-shrink: 0; }
-.name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.name { flex: 1; min-width: 0; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .col-type, .entry-type { color: #aaa; font-size: 0.8rem; }
 .col-size, .entry-size { color: #aaa; font-size: 0.82rem; text-align: right; padding-right: 10px; }

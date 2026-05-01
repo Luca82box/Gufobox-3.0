@@ -129,14 +129,51 @@
       </div>
     </Transition>
 
+    <!-- ═══════════════════════════════════════════════════
+         VOICE CAPTURE OVERLAY (record_voice mode)
+    ═══════════════════════════════════════════════════ -->
+    <Transition name="slide-up">
+      <div v-if="voiceCapture.active" class="voice-capture-card">
+        <div class="vc-header">
+          <h3>🎤 Registro la tua voce!</h3>
+          <p class="vc-profile">{{ voiceCapture.profileName }}</p>
+        </div>
+
+        <div class="vc-status">
+          <div v-if="voiceCapture.recording" class="vc-recording-indicator">
+            <span class="rec-dot"></span> Registrazione in corso...
+          </div>
+          <div v-else-if="voiceCapture.uploading" class="vc-uploading">⏳ Salvataggio...</div>
+          <div v-else-if="voiceCapture.saved" class="vc-saved">✅ Registrazione salvata!</div>
+          <div v-else class="vc-ready">Premi il pulsante per iniziare</div>
+        </div>
+
+        <div class="vc-controls">
+          <button
+            v-if="!voiceCapture.recording"
+            class="btn-rec-start"
+            :disabled="voiceCapture.uploading || voiceCapture.saved"
+            @click="startVoiceCapture"
+          >🎤 Inizia a parlare</button>
+          <button
+            v-if="voiceCapture.recording"
+            class="btn-rec-stop"
+            @click="stopVoiceCapture"
+          >⏹ Finito!</button>
+          <button class="btn-rec-close" @click="dismissVoiceCapture">✕ Chiudi</button>
+        </div>
+      </div>
+    </Transition>
+
   </div>
 </template>
 
 <script setup>
-import { onMounted, onBeforeUnmount, ref, watch, nextTick } from 'vue'
+import { onMounted, onBeforeUnmount, ref, reactive, watch, nextTick } from 'vue'
 import { useMedia } from '../composables/useMedia'
 import { useAi } from '../composables/useAi'
 import { useAuth } from '../composables/useAuth'
+import { useApi } from '../composables/useApi'
 
 const {
   mediaStatus, currentProfile, currentVolume, rssPreview,
@@ -150,6 +187,7 @@ const {
 } = useAi()
 
 const { showAiChat } = useAuth()
+const { getApi, getSocket } = useApi()
 
 const chatHistoryRef = ref(null)
 
@@ -160,16 +198,100 @@ watch(() => aiRuntime.value?.history, async () => {
   }
 }, { deep: true })
 
+// ─── Voice capture (record_voice mode) ────────────────────
+const voiceCapture = reactive({
+  active: false,
+  profileName: '',
+  rfidCode: '',
+  recording: false,
+  uploading: false,
+  saved: false,
+})
+
+let mediaRecorder = null
+let audioChunks = []
+
+function handleVoiceCaptureRequested(data) {
+  voiceCapture.active = true
+  voiceCapture.profileName = data?.profile_name || 'Registro voce'
+  voiceCapture.rfidCode = data?.rfid_code || ''
+  voiceCapture.recording = false
+  voiceCapture.uploading = false
+  voiceCapture.saved = false
+  audioChunks = []
+}
+
+async function startVoiceCapture() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    audioChunks = []
+    mediaRecorder = new MediaRecorder(stream)
+    mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data) }
+    mediaRecorder.onstop = () => {
+      stream.getTracks().forEach(t => t.stop())
+      uploadVoiceCapture()
+    }
+    mediaRecorder.start()
+    voiceCapture.recording = true
+  } catch (e) {
+    console.error('Errore accesso microfono:', e)
+    voiceCapture.recording = false
+  }
+}
+
+function stopVoiceCapture() {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop()
+    voiceCapture.recording = false
+  }
+}
+
+async function uploadVoiceCapture() {
+  if (!audioChunks.length) return
+  voiceCapture.uploading = true
+  const blob = new Blob(audioChunks, { type: 'audio/webm' })
+  const formData = new FormData()
+  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+  formData.append('file', blob, `registro-${voiceCapture.rfidCode || 'voce'}-${ts}.webm`)
+  formData.append('role', 'bambino')
+  if (voiceCapture.rfidCode) formData.append('rfid_code', voiceCapture.rfidCode)
+  try {
+    await getApi().post('/voice/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    voiceCapture.uploading = false
+    voiceCapture.saved = true
+    setTimeout(() => { voiceCapture.active = false }, 2000)
+  } catch (e) {
+    console.error('Errore upload registrazione:', e)
+    voiceCapture.uploading = false
+  }
+}
+
+function dismissVoiceCapture() {
+  stopVoiceCapture()
+  voiceCapture.active = false
+}
+
 let pollingTimer = null
+
+function handleVoiceCaptureSocket(data) {
+  handleVoiceCaptureRequested(data)
+}
 
 onMounted(() => {
   initSpeechRecognition()
   loadMediaStatus()
   pollingTimer = setInterval(() => { loadMediaStatus() }, 3000)
+  const s = getSocket()
+  if (s) s.on('voice_capture_requested', handleVoiceCaptureSocket)
 })
 
 onBeforeUnmount(() => {
   if (pollingTimer) clearInterval(pollingTimer)
+  const s = getSocket()
+  if (s) s.off('voice_capture_requested', handleVoiceCaptureSocket)
+  stopVoiceCapture()
 })
 </script>
 
@@ -535,5 +657,54 @@ onBeforeUnmount(() => {
   opacity: 0;
   transform: translateY(20px);
 }
+
+/* ─── Voice Capture Overlay ───────────────────────────────── */
+.voice-capture-card {
+  width: 100%;
+  background: rgba(10, 24, 40, 0.92);
+  border: 2px solid #3f51b5;
+  border-radius: 20px;
+  padding: 24px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  box-shadow: 0 8px 32px rgba(63,81,181,0.35);
+}
+
+.vc-header { text-align: center; }
+.vc-header h3 { margin: 0; color: #fff; font-size: 1.3rem; }
+.vc-profile { margin: 4px 0 0; color: #90caf9; font-size: .9rem; }
+
+.vc-status { font-size: 1rem; color: #ccc; }
+.vc-recording-indicator { display: flex; align-items: center; gap: 8px; color: #ff5252; font-weight: 700; }
+.rec-dot { width: 12px; height: 12px; background: #ff5252; border-radius: 50%; animation: pulse 1s infinite; }
+.vc-uploading { color: #ffd27b; }
+.vc-saved { color: #4caf50; font-weight: 700; }
+.vc-ready { color: #90caf9; }
+
+.vc-controls { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+.btn-rec-start {
+  background: linear-gradient(135deg, #3f51b5, #1565c0);
+  color: #fff; border: none; border-radius: 50px;
+  padding: 12px 28px; font-size: 1rem; font-weight: 700;
+  cursor: pointer; box-shadow: 0 4px 16px rgba(63,81,181,0.4);
+  transition: transform .15s, box-shadow .15s;
+}
+.btn-rec-start:hover:not(:disabled) { transform: scale(1.05); box-shadow: 0 6px 20px rgba(63,81,181,0.6); }
+.btn-rec-start:disabled { opacity: .45; cursor: not-allowed; }
+.btn-rec-stop {
+  background: linear-gradient(135deg, #ff5252, #c62828);
+  color: #fff; border: none; border-radius: 50px;
+  padding: 12px 28px; font-size: 1rem; font-weight: 700;
+  cursor: pointer; box-shadow: 0 4px 16px rgba(255,82,82,0.4);
+  animation: pulse 1s infinite;
+}
+.btn-rec-close {
+  background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);
+  color: #ccc; border-radius: 50px; padding: 10px 20px; font-size: .95rem;
+  cursor: pointer; transition: background .15s;
+}
+.btn-rec-close:hover { background: rgba(255,255,255,0.18); }
 </style>
 

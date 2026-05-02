@@ -569,15 +569,15 @@ def _checked_download(url: str, dest_path: str, allowed_hosts: set, max_bytes: i
 
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in ("http", "https"):
-        raise ValueError(f"Schema URL non consentito: '{parsed.scheme}'. Usa http o https.")
+        raise ValueError("Schema URL non consentito. Usa solo http o https.")
 
     hostname = (parsed.hostname or "").lower()
     if not hostname:
         raise ValueError("URL non valido: hostname mancante.")
     if hostname not in allowed_hosts:
         raise ValueError(
-            f"Host non consentito: '{hostname}'. "
-            f"Sono accettati solo: {', '.join(sorted(allowed_hosts))}."
+            "Provider non consentito. "
+            f"Il download è permesso solo da: {', '.join(sorted(allowed_hosts))}."
         )
 
     # Verifica che dest_path sia all'interno di expected_dir (se fornito)
@@ -604,11 +604,12 @@ def _checked_download(url: str, dest_path: str, allowed_hosts: set, max_bytes: i
     if ctx is not None:
         open_kwargs["context"] = ctx
 
-    # Use the fully-validated safe_url (host-allowlisted, reconstructed) — not raw user input
-    safe_dest = os.path.realpath(dest_path)  # normalised, cannot escape expected_dir
+    # Use the fully-validated safe_url (host-allowlisted, reconstructed) -- not raw user input.
+    # dest_path comes from os.path.join(trusted_config_dir, regex-validated_filename) in callers.
+    safe_dest = os.path.realpath(dest_path)
     size_bytes = 0
     try:
-        with urllib.request.urlopen(req, **open_kwargs) as response:  # noqa: S310 — host validated above
+        with urllib.request.urlopen(req, **open_kwargs) as response:  # noqa: S310 -- host validated above
             with open(safe_dest, "wb") as out:
                 while True:
                     chunk = response.read(_DOWNLOAD_CHUNK_SIZE)
@@ -667,9 +668,10 @@ def api_tts_offline_download_binary():
                 expected_dir=tmpdir,
             )
         except ValueError as exc:
-            return jsonify({"error": _safe_error(exc)}), 400
-        except RuntimeError as exc:
-            return jsonify({"error": _safe_error(exc)}), 502
+            log(f"Piper binary download URL error: {exc}", "warning")
+            return jsonify({"error": "URL non valido o provider non autorizzato."}), 400
+        except RuntimeError:
+            return jsonify({"error": "Errore durante il download. Controlla i log del server."}), 502
 
         # Estrai il binario dall'archivio tar.gz
         try:
@@ -810,7 +812,8 @@ def api_tts_offline_download_voice():
         safe_onnx = _validate_piper_upload_filename(onnx_filename)
         safe_config = _validate_piper_upload_filename(config_filename)
     except ValueError as exc:
-        return jsonify({"error": f"Nome file voce non valido: {_safe_error(exc)}"}), 400
+        log(f"Piper voice filename validation error: {exc}", "warning")
+        return jsonify({"error": "Nome file voce non valido o non consentito."}), 400
 
     voices_dir = _cfg.PIPER_VOICES_DIR
     os.makedirs(voices_dir, exist_ok=True)
@@ -826,9 +829,10 @@ def api_tts_offline_download_voice():
             results.append({"file": safe_name, "ok": True, "size": info["size"]})
             log(f"Voce Piper scaricata: {safe_name} ({info['size']} bytes)", "info")
         except ValueError as exc:
-            return jsonify({"error": _safe_error(exc)}), 400
-        except RuntimeError as exc:
-            return jsonify({"error": _safe_error(exc)}), 502
+            log(f"Piper voice download URL error: {exc}", "warning")
+            return jsonify({"error": "URL non valido o provider non autorizzato."}), 400
+        except RuntimeError:
+            return jsonify({"error": "Errore durante il download. Controlla i log del server."}), 502
 
     return jsonify({
         "status": "ok",

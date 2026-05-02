@@ -131,14 +131,14 @@ class TestDownloadBinary:
             "url": "ftp://github.com/rhasspy/piper/releases/download/v1/piper.tar.gz"
         })
         assert rv.status_code == 400
-        assert "Schema" in rv.get_json()["error"] or "schema" in rv.get_json()["error"].lower()
+        assert "non valido" in rv.get_json()["error"].lower() or "non autorizzato" in rv.get_json()["error"].lower()
 
     def test_rejects_disallowed_host(self, client):
         rv = client.post("/api/tts/offline/download-binary", json={
             "url": "https://evil.example.com/piper.tar.gz"
         })
         assert rv.status_code == 400
-        assert "consentito" in rv.get_json()["error"]
+        assert rv.get_json()["error"]
 
     def test_rejects_localhost_host(self, client):
         rv = client.post("/api/tts/offline/download-binary", json={
@@ -237,7 +237,7 @@ class TestDownloadVoice:
             "config_url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/it_IT-paola-medium.onnx.json"
         })
         assert rv.status_code == 400
-        assert "consentito" in rv.get_json()["error"]
+        assert rv.get_json()["error"]
 
     def test_success_by_suggested_name(self, client, tts_env):
         """Download by suggested voice name downloads both .onnx and .onnx.json files."""

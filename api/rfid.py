@@ -40,8 +40,10 @@ VALID_MODES = {
     # New child interactive experience modes (PR 32+)
     "adventure", "spoken_quiz", "karaoke", "guess_sound",
     "personalized_story", "bedtime", "imitate", "playful_english", "logic_games",
-    # Child voice capture mode
+    # Child voice capture mode (browser-based)
     "record_voice",
+    # Guided hardware voice recording via statuina (server-side, offline-capable)
+    "statuina_record",
 }
 
 # New child experience modes that use the AI engine
@@ -509,6 +511,16 @@ def handle_rfid_trigger(rfid_code: str) -> bool:
     if not rfid_code:
         return False
 
+    # Se una registrazione statuina è in corso, fermala e attendi il completamento
+    # prima di passare alla nuova statuina (equivale a premere play/pausa).
+    try:
+        from core.voice_recorder import is_statuina_recording, stop_and_wait_statuina_recording
+        if is_statuina_recording():
+            log(f"Nuova statuina {rfid_code} presentata durante registrazione — stop e attesa completamento", "info")
+            stop_and_wait_statuina_recording(timeout=60.0)
+    except Exception as _vr_err:
+        log(f"Controllo registrazione statuina fallito: {_vr_err}", "warning")
+
     profile = rfid_profiles.get(rfid_code)
     if not profile:
         log(f"Profilo RFID {rfid_code} non trovato — provo legacy rfid_map", "info")
@@ -553,6 +565,8 @@ def handle_rfid_trigger(rfid_code: str) -> bool:
             return _exec_voice_recording(rfid_code, profile)
         elif mode == "record_voice":
             return _exec_record_voice(rfid_code, profile)
+        elif mode == "statuina_record":
+            return _exec_statuina_record(rfid_code, profile)
         elif mode in _EXPERIENCE_AI_MODES:
             return _exec_experience_ai(rfid_code, profile)
         elif mode in _EXPERIENCE_AUDIO_MODES:
@@ -1022,6 +1036,29 @@ def _do_record_voice(rfid_code, profile):
     return name
 
 
+def _exec_statuina_record(rfid_code, profile):
+    """Logica pura per mode=statuina_record: avvia il flusso guidato di registrazione vocale
+    con prompts offline, verso del gufo, timeout 5 minuti e salvataggio MP3."""
+    from core.voice_recorder import start_statuina_recording
+
+    name = profile.get("name", rfid_code)
+    media_runtime["current_rfid"] = rfid_code
+    media_runtime["current_profile_name"] = name
+    media_runtime["current_mode"] = "statuina_record"
+    bus.mark_dirty("media")
+    bus.request_emit("public")
+
+    started = start_statuina_recording(rfid_code, name)
+    if not started:
+        bus.emit_notification("⚠️ Registrazione già in corso, ripassa la statuina più tardi.", "warning")
+        return False
+
+    log_event("rfid", "info", "Registrazione vocale guidata avviata via statuina", {
+        "rfid_code": rfid_code, "profile_name": name,
+    })
+    return True
+
+
 # =========================================================
 # TRIGGER
 # =========================================================
@@ -1036,6 +1073,16 @@ def api_rfid_trigger_profile():
 
     if not rfid_code:
         return jsonify({"error": "rfid_code mancante"}), 400
+
+    # Se una registrazione statuina è in corso, fermala e attendi il completamento
+    # (equivale a premere play/pausa) prima di avviare la nuova statuina.
+    try:
+        from core.voice_recorder import is_statuina_recording, stop_and_wait_statuina_recording
+        if is_statuina_recording():
+            log(f"Nuova statuina {rfid_code} presentata durante registrazione — stop e attesa completamento", "info")
+            stop_and_wait_statuina_recording(timeout=60.0)
+    except Exception as _vr_err:
+        log(f"Controllo registrazione statuina (HTTP) fallito: {_vr_err}", "warning")
 
     profile = rfid_profiles.get(rfid_code)
     if not profile:
@@ -1076,6 +1123,8 @@ def api_rfid_trigger_profile():
         return _trigger_voice_recording(rfid_code, profile)
     elif mode == "record_voice":
         return _trigger_record_voice(rfid_code, profile)
+    elif mode == "statuina_record":
+        return _trigger_statuina_record(rfid_code, profile)
     elif mode in _EXPERIENCE_AI_MODES:
         return _trigger_experience_ai(rfid_code, profile)
     elif mode in _EXPERIENCE_AUDIO_MODES:
@@ -1523,6 +1572,19 @@ def _trigger_record_voice(rfid_code, profile):
         "status": "ok",
         "mode": "record_voice",
         "profile_name": name,
+        "rfid_code": rfid_code,
+    })
+
+
+def _trigger_statuina_record(rfid_code, profile):
+    """mode=statuina_record: avvia il flusso guidato di registrazione vocale hardware."""
+    started = _exec_statuina_record(rfid_code, profile)
+    if not started:
+        return jsonify({"error": "Registrazione già in corso o avvio non riuscito"}), 409
+    return jsonify({
+        "status": "ok",
+        "mode": "statuina_record",
+        "profile_name": profile.get("name", rfid_code),
         "rfid_code": rfid_code,
     })
 

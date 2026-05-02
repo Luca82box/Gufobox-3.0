@@ -185,6 +185,48 @@ def test_list_filter_type_dir(client, tmp_root):
     assert all(e["is_dir"] for e in entries)
 
 
+def test_list_folder_name_is_real_name_not_type(client, tmp_root):
+    """Folder entries must expose the real folder name in 'name', not the type value."""
+    # Create several folders with distinct names
+    os.makedirs(os.path.join(tmp_root, "musica"))
+    os.makedirs(os.path.join(tmp_root, "favole"))
+    os.makedirs(os.path.join(tmp_root, "xyz_dir"))
+
+    rv = client.get(f"/api/files/list?path={tmp_root}&filter_type=dir")
+    assert rv.status_code == 200
+    entries = rv.get_json()["entries"]
+
+    dir_names = {e["name"] for e in entries}
+    # The real folder names must be present
+    assert "musica" in dir_names
+    assert "favole" in dir_names
+    assert "xyz_dir" in dir_names
+    # The type value must NOT appear as a folder name
+    for e in entries:
+        assert e["name"] != e["type"], (
+            f"Folder '{e['name']}' has name equal to its type '{e['type']}': "
+            "the Nome column would show the type label instead of the real name."
+        )
+
+
+def test_list_folder_type_is_cartella(client, tmp_root):
+    """Folder entries must have type='cartella' (not the legacy 'dir') for proper Italian UI display."""
+    os.makedirs(os.path.join(tmp_root, "test_cartella"))
+    open(os.path.join(tmp_root, "test_file.txt"), "w").close()
+
+    rv = client.get(f"/api/files/list?path={tmp_root}")
+    assert rv.status_code == 200
+    entries = rv.get_json()["entries"]
+
+    for e in entries:
+        if e["is_dir"]:
+            assert e["type"] == "cartella", (
+                f"Directory entry should have type='cartella', got type='{e['type']}'"
+            )
+        else:
+            assert e["type"] != "cartella"
+
+
 def test_list_access_denied_outside_roots(client, tmp_root):
     rv = client.get("/api/files/list?path=/etc")
     assert rv.status_code == 403

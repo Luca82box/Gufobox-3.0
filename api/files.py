@@ -109,7 +109,7 @@ def _entry_dict(full_path: str) -> dict:
         "is_dir": is_dir,
         "size": stat.st_size if not is_dir else 0,
         "mtime": int(stat.st_mtime),
-        "type": "dir" if is_dir else _file_type(full_path),
+        "type": "cartella" if is_dir else _file_type(full_path),
     }
 
 
@@ -599,7 +599,7 @@ def api_files_details():
             "is_dir": is_dir,
             "size": stat.st_size if not is_dir else 0,
             "mtime": int(stat.st_mtime),
-            "type": "dir" if is_dir else _file_type(real),
+            "type": "cartella" if is_dir else _file_type(real),
             "mime": mimetypes.guess_type(real)[0] if not is_dir else None,
             "readable": os.access(real, os.R_OK),
             "writable": os.access(real, os.W_OK),

@@ -548,7 +548,7 @@ _DOWNLOAD_CHUNK_SIZE = 64 * 1024
 
 
 def _checked_download(url: str, dest_path: str, allowed_hosts: set, max_bytes: int,
-                       validate_fn=None) -> dict:
+                       expected_dir: str = None, validate_fn=None) -> dict:
     """
     Scarica un file da *url* in modo sicuro, validando:
     - schema http/https
@@ -556,8 +556,10 @@ def _checked_download(url: str, dest_path: str, allowed_hosts: set, max_bytes: i
     - dimensione massima
     - dest_path derivato da config + nome validato (previene path traversal)
 
-    validate_fn: funzione opzionale chiamata con dest_path dopo il download
-                 per validazioni aggiuntive sul file salvato (es. tipo archivio).
+    expected_dir: se specificato, verifica che dest_path sia all'interno di
+                  questa directory (protezione aggiuntiva contro path traversal).
+    validate_fn:  funzione opzionale chiamata con dest_path dopo il download
+                  per validazioni aggiuntive sul file salvato.
 
     Ritorna {"ok": True, "size": N} oppure solleva ValueError/RuntimeError.
     """
@@ -578,6 +580,13 @@ def _checked_download(url: str, dest_path: str, allowed_hosts: set, max_bytes: i
             f"Sono accettati solo: {', '.join(sorted(allowed_hosts))}."
         )
 
+    # Verifica che dest_path sia all'interno di expected_dir (se fornito)
+    if expected_dir is not None:
+        real_dest = os.path.realpath(dest_path)
+        real_expected = os.path.realpath(expected_dir)
+        if real_dest != real_expected and not real_dest.startswith(real_expected + os.sep):
+            raise ValueError("Percorso di destinazione non consentito.")
+
     # Ricostruisci l'URL esclusivamente dai componenti validati (schema + host + path + query)
     # per eliminare ogni possibilità che dati utente non validati raggiungano urlopen.
     safe_url = urllib.parse.urlunparse((
@@ -595,10 +604,12 @@ def _checked_download(url: str, dest_path: str, allowed_hosts: set, max_bytes: i
     if ctx is not None:
         open_kwargs["context"] = ctx
 
+    # Use the fully-validated safe_url (host-allowlisted, reconstructed) — not raw user input
+    safe_dest = os.path.realpath(dest_path)  # normalised, cannot escape expected_dir
     size_bytes = 0
     try:
         with urllib.request.urlopen(req, **open_kwargs) as response:  # noqa: S310 — host validated above
-            with open(dest_path, "wb") as out:
+            with open(safe_dest, "wb") as out:
                 while True:
                     chunk = response.read(_DOWNLOAD_CHUNK_SIZE)
                     if not chunk:
@@ -606,7 +617,7 @@ def _checked_download(url: str, dest_path: str, allowed_hosts: set, max_bytes: i
                     size_bytes += len(chunk)
                     if size_bytes > max_bytes:
                         try:
-                            os.remove(dest_path)
+                            os.remove(safe_dest)
                         except OSError:
                             pass
                         raise ValueError(
@@ -616,10 +627,11 @@ def _checked_download(url: str, dest_path: str, allowed_hosts: set, max_bytes: i
     except ValueError:
         raise
     except Exception as exc:
-        raise RuntimeError(f"Errore durante il download: {_safe_error(exc)}") from exc
+        log(f"Piper download error (network/IO): {exc}", "error")
+        raise RuntimeError("Errore durante il download. Controlla i log del server.") from exc
 
     if validate_fn:
-        validate_fn(dest_path)
+        validate_fn(safe_dest)
 
     return {"ok": True, "size": size_bytes}
 
@@ -651,7 +663,8 @@ def api_tts_offline_download_binary():
         archive_path = os.path.join(tmpdir, "piper.tar.gz")
         try:
             _checked_download(
-                url, archive_path, _PIPER_BINARY_ALLOWED_HOSTS, _PIPER_BINARY_MAX_BYTES
+                url, archive_path, _PIPER_BINARY_ALLOWED_HOSTS, _PIPER_BINARY_MAX_BYTES,
+                expected_dir=tmpdir,
             )
         except ValueError as exc:
             return jsonify({"error": _safe_error(exc)}), 400
@@ -683,7 +696,8 @@ def api_tts_offline_download_binary():
                             break
                         dst.write(chunk)
         except (tarfile.TarError, Exception) as exc:
-            return jsonify({"error": f"Errore estrazione archivio: {_safe_error(exc)}"}), 422
+            log(f"Piper binary archive extraction error: {exc}", "error")
+            return jsonify({"error": "Errore durante l'estrazione dell'archivio tar.gz."}), 422
 
         # Salva il binario in PIPER_LOCAL_BIN
         try:
@@ -695,7 +709,8 @@ def api_tts_offline_download_binary():
             current_mode = os.stat(local_bin).st_mode
             os.chmod(local_bin, current_mode | 0o111)
         except OSError as exc:
-            return jsonify({"error": f"Errore salvataggio binario: {_safe_error(exc)}"}), 500
+            log(f"Piper binary save error: {exc}", "error")
+            return jsonify({"error": "Errore durante il salvataggio del binario."}), 500
 
     # Aggiorna il path eseguibile runtime
     with _piper_exe_lock:
@@ -797,14 +812,16 @@ def api_tts_offline_download_voice():
     except ValueError as exc:
         return jsonify({"error": f"Nome file voce non valido: {_safe_error(exc)}"}), 400
 
-    os.makedirs(_cfg.PIPER_VOICES_DIR, exist_ok=True)
+    voices_dir = _cfg.PIPER_VOICES_DIR
+    os.makedirs(voices_dir, exist_ok=True)
     results = []
 
     for url_to_dl, safe_name in [(onnx_url, safe_onnx), (config_url, safe_config)]:
-        dest_path = os.path.join(_cfg.PIPER_VOICES_DIR, safe_name)
+        dest_path = os.path.join(voices_dir, safe_name)
         try:
             info = _checked_download(
-                url_to_dl, dest_path, _PIPER_VOICE_ALLOWED_HOSTS, _PIPER_VOICE_MAX_BYTES
+                url_to_dl, dest_path, _PIPER_VOICE_ALLOWED_HOSTS, _PIPER_VOICE_MAX_BYTES,
+                expected_dir=voices_dir,
             )
             results.append({"file": safe_name, "ok": True, "size": info["size"]})
             log(f"Voce Piper scaricata: {safe_name} ({info['size']} bytes)", "info")

@@ -75,23 +75,16 @@
       </button>
     </div>
 
-    <!-- OTA Update -->
+    <!-- OTA Update — Stato globale e log -->
     <div class="card">
-      <h3>Aggiornamento OTA ⬆️</h3>
-
-      <!-- Descrizione cosa include l'aggiornamento -->
-      <div class="ota-info-box">
-        <strong>Cosa comprende l'aggiornamento?</strong>
-        <ul class="ota-includes-list">
-          <li>📦 <strong>Aggiorna App</strong> — scarica l'ultima versione del codice backend Python e frontend Vue da GitHub (git pull), reinstalla le dipendenze Python e ricompila il frontend</li>
-          <li>🛡️ <strong>Aggiorna Sistema</strong> — aggiorna i pacchetti di sistema Raspberry Pi/Debian tramite apt-get (sicuro, non riavvia automaticamente)</li>
-        </ul>
-        <p class="ota-tip">💡 Viene creato un backup automatico prima di ogni aggiornamento. Puoi ripristinare dalla sezione Backup se qualcosa va storto.</p>
+      <div class="card-header">
+        <h3>Aggiornamenti ⬆️</h3>
+        <button class="btn-refresh" @click="loadOtaStatus">🔄</button>
       </div>
 
       <div class="ota-status-bar" :class="otaStatus.status">
         <span>Stato: <strong>{{ otaStatusLabel }}</strong></span>
-        <span v-if="otaStatus.mode"> — Modalità: {{ otaStatus.mode }}</span>
+        <span v-if="otaStatus.mode"> — Modalità: {{ otaModeLabel }}</span>
         <span v-if="otaStatus.finished_at"> — Finito: {{ formatDate(otaStatus.finished_at) }}</span>
       </div>
 
@@ -111,101 +104,176 @@
         ⚠️ Ultimo errore: {{ otaStatus.last_error }}
       </div>
 
-      <div class="ota-actions">
-        <button
-          class="btn-ota"
-          @click="startOta('app')"
-          :disabled="otaRunning"
-        >
-          📦 Aggiorna App (git pull)
-        </button>
-        <button
-          class="btn-ota"
-          @click="startOta('system_safe')"
-          :disabled="otaRunning"
-        >
-          🛡️ Aggiorna Sistema (apt)
-        </button>
-        <button class="btn-refresh" @click="loadOtaStatus">🔄</button>
-      </div>
-
       <div v-if="showLog" class="ota-log-box">
         <pre>{{ otaLog }}</pre>
       </div>
       <button class="btn-link" @click="toggleLog">
         {{ showLog ? '▲ Nascondi log' : '▼ Mostra log OTA' }}
       </button>
+
+      <p class="ota-tip">💡 Viene creato un backup automatico prima di ogni aggiornamento. Puoi ripristinare dalla sezione Backup se qualcosa va storto.</p>
     </div>
 
-    <!-- OTA da file -->
+    <!-- Aggiornamento Applicazione -->
     <div class="card">
-      <h3>Aggiornamento da File 📁</h3>
-      <p class="card-desc">Carica un package <code>.zip</code> o <code>.tar.gz</code> per aggiornare l'app manualmente. Il processo: validazione archivio → backup automatico → copia file.</p>
+      <h3>📦 Aggiorna Applicazione</h3>
+      <p class="card-desc">Aggiorna il codice backend Python e frontend Vue tramite <code>git pull</code> e reinstalla le dipendenze. In alternativa, carica o scarica un package <code>.zip</code>/<code>.tar.gz</code>.</p>
 
-      <!-- Upload area -->
-      <div class="file-upload-area">
-        <input
-          ref="fileInputRef"
-          type="file"
-          accept=".zip,.tar.gz"
-          style="display:none"
-          @change="onFileSelected"
-        />
-        <button class="btn-ota" @click="fileInputRef.click()" :disabled="otaRunning || uploadBusy">
-          📂 Seleziona package
-        </button>
-        <span v-if="selectedFile" class="file-selected-name">{{ selectedFile.name }}</span>
+      <div class="ota-actions">
         <button
-          v-if="selectedFile"
-          class="btn-ota btn-upload"
-          @click="uploadPackage"
-          :disabled="otaRunning || uploadBusy"
+          class="btn-ota"
+          @click="startOta('app')"
+          :disabled="otaRunning"
         >
-          {{ uploadBusy ? '⏳ Caricamento...' : '⬆️ Carica' }}
+          🔄 Aggiorna via git pull
         </button>
       </div>
 
-      <!-- Upload error -->
-      <div v-if="uploadError" class="ota-error-box">⚠️ {{ uploadError }}</div>
+      <!-- Sezione upload/URL -->
+      <div class="ota-subsection">
+        <h4 class="subsection-title">Aggiorna da file o URL</h4>
 
-      <!-- Staged package info -->
-      <div v-if="otaStatus.staged_filename && !uploadError" class="staged-info">
-        <span class="staged-label">Package caricato:</span>
-        <span class="staged-name">{{ otaStatus.staged_filename }}</span>
-        <span v-if="otaStatus.staged_at" class="staged-date">{{ formatDate(otaStatus.staged_at) }}</span>
-      </div>
-
-      <!-- Apply section -->
-      <div v-if="canApplyUploaded" class="ota-apply-section">
-        <p class="apply-desc">Il package è pronto. Clicca "Applica" per avviare l'aggiornamento (backup automatico prima dell'apply).</p>
-        <div class="ota-actions">
+        <!-- Upload da file -->
+        <div class="file-upload-area">
+          <input
+            ref="fileInputRef"
+            type="file"
+            accept=".zip,.tar.gz"
+            style="display:none"
+            @change="onFileSelected"
+          />
+          <button class="btn-ota" @click="fileInputRef.click()" :disabled="otaRunning || uploadBusy || fetchUrlBusy">
+            📂 Seleziona package
+          </button>
+          <span v-if="selectedFile" class="file-selected-name">{{ selectedFile.name }}</span>
           <button
-            class="btn-ota btn-apply"
-            @click="applyUploaded"
-            :disabled="otaRunning || uploadBusy"
+            v-if="selectedFile"
+            class="btn-ota btn-upload"
+            @click="uploadPackage"
+            :disabled="otaRunning || uploadBusy || fetchUrlBusy"
           >
-            ✅ Applica Package
+            {{ uploadBusy ? '⏳ Caricamento...' : '⬆️ Carica' }}
           </button>
         </div>
+
+        <!-- Oppure: URL -->
+        <div class="url-fetch-area">
+          <span class="url-fetch-label">oppure scarica da URL:</span>
+          <input
+            v-model="fetchUrl"
+            type="url"
+            class="input-url"
+            placeholder="https://example.com/gufobox-update.zip"
+            :disabled="otaRunning || uploadBusy || fetchUrlBusy"
+          />
+          <button
+            class="btn-ota btn-fetch-url"
+            @click="fetchPackageFromUrl"
+            :disabled="!fetchUrl || otaRunning || uploadBusy || fetchUrlBusy"
+          >
+            {{ fetchUrlBusy ? '⏳ Download...' : '🌐 Scarica' }}
+          </button>
+        </div>
+
+        <!-- Upload/fetch error -->
+        <div v-if="uploadError" class="ota-error-box">⚠️ {{ uploadError }}</div>
+
+        <!-- Staged package info -->
+        <div v-if="otaStatus.staged_filename && !uploadError" class="staged-info">
+          <span class="staged-label">Package pronto:</span>
+          <span class="staged-name">{{ otaStatus.staged_filename }}</span>
+          <span v-if="otaStatus.staged_at" class="staged-date">{{ formatDate(otaStatus.staged_at) }}</span>
+        </div>
+
+        <!-- Apply section -->
+        <div v-if="canApplyUploaded" class="ota-apply-section">
+          <p class="apply-desc">Il package è pronto. Clicca "Applica" per avviare l'aggiornamento (backup automatico prima dell'apply).</p>
+          <div class="ota-actions">
+            <button
+              class="btn-ota btn-apply"
+              @click="applyUploaded"
+              :disabled="otaRunning || uploadBusy || fetchUrlBusy"
+            >
+              ✅ Applica Package
+            </button>
+          </div>
+        </div>
+
+        <!-- In-progress for file OTA -->
+        <div v-if="otaRunning && otaStatus.mode === 'file'" class="ota-progress">
+          <div class="ota-progress-bar">
+            <div class="ota-progress-fill" :style="{ width: (otaStatus.progress_percent || 0) + '%' }"></div>
+          </div>
+          <div class="ota-progress-info">
+            <span class="ota-progress-pct">{{ otaStatus.progress_percent || 0 }}%</span>
+            <span class="progress-desc">{{ otaStatus.description || 'Apply in corso...' }}</span>
+          </div>
+        </div>
+
+        <!-- File OTA result -->
+        <div v-if="otaStatus.mode === 'file' && otaStatus.status === 'success'" class="ota-success-box">
+          ✅ {{ otaStatus.description }}
+        </div>
+        <div v-if="otaStatus.mode === 'file' && otaStatus.status === 'failed'" class="ota-error-box">
+          ❌ {{ otaStatus.last_error || otaStatus.description }}
+        </div>
+      </div>
+    </div>
+
+    <!-- Aggiornamento Driver Periferiche -->
+    <div class="card">
+      <h3>🔌 Aggiorna Driver Periferiche</h3>
+      <p class="card-desc">Aggiorna i driver audio, GPIO, I2C, SPI e altri moduli periferici via <code>apt-get</code>. Non richiede riavvio nella maggior parte dei casi.</p>
+
+      <div class="ota-info-box">
+        <strong>Pacchetti aggiornati:</strong>
+        <ul class="ota-includes-list">
+          <li>🔊 <strong>Driver audio</strong> — alsa-utils, libasound2</li>
+          <li>📡 <strong>GPIO / I2C / SPI</strong> — python3-rpi.gpio, python3-spidev, python3-smbus, i2c-tools</li>
+          <li>🍓 <strong>Moduli Raspberry Pi</strong> — linux-modules-extra-raspi, raspi-config</li>
+        </ul>
       </div>
 
-      <!-- In-progress for file OTA -->
-      <div v-if="otaRunning && otaStatus.mode === 'file'" class="ota-progress">
-        <div class="ota-progress-bar">
-          <div class="ota-progress-fill" :style="{ width: (otaStatus.progress_percent || 0) + '%' }"></div>
-        </div>
-        <div class="ota-progress-info">
-          <span class="ota-progress-pct">{{ otaStatus.progress_percent || 0 }}%</span>
-          <span class="progress-desc">{{ otaStatus.description || 'Apply in corso...' }}</span>
-        </div>
+      <div class="ota-actions">
+        <button
+          class="btn-ota btn-drivers"
+          @click="startOta('drivers')"
+          :disabled="otaRunning"
+        >
+          🔌 Aggiorna Driver
+        </button>
+      </div>
+    </div>
+
+    <!-- Aggiornamento Sistema Operativo / Firmware / Kernel -->
+    <div class="card">
+      <h3>🛡️ Aggiorna Sistema / Firmware / Kernel</h3>
+      <p class="card-desc">Aggiorna il sistema operativo Raspberry Pi/Debian, il firmware e il kernel. Può richiedere un riavvio al termine.</p>
+
+      <div class="ota-info-box ota-info-warning">
+        <strong>⚠️ Attenzione:</strong> questo aggiornamento modifica pacchetti di sistema critici. Si consiglia di eseguirlo solo quando necessario e di pianificare un riavvio successivo.
+        <ul class="ota-includes-list">
+          <li>🛡️ <strong>Aggiorna OS (apt)</strong> — full-upgrade di tutti i pacchetti Raspberry Pi/Debian</li>
+          <li>🍓 <strong>Firmware / Bootloader</strong> — raspberrypi-bootloader, raspberrypi-kernel, firmware-brcm80211</li>
+          <li>🔧 <strong>Kernel (rpi-update)</strong> — se disponibile, aggiorna il kernel all'ultima versione stabile</li>
+        </ul>
       </div>
 
-      <!-- File OTA result -->
-      <div v-if="otaStatus.mode === 'file' && otaStatus.status === 'success'" class="ota-success-box">
-        ✅ {{ otaStatus.description }}
-      </div>
-      <div v-if="otaStatus.mode === 'file' && otaStatus.status === 'failed'" class="ota-error-box">
-        ❌ {{ otaStatus.last_error || otaStatus.description }}
+      <div class="ota-actions">
+        <button
+          class="btn-ota btn-system"
+          @click="startOta('system_safe')"
+          :disabled="otaRunning"
+        >
+          🛡️ Aggiorna OS (apt)
+        </button>
+        <button
+          class="btn-ota btn-firmware"
+          @click="confirmAndStartFirmware"
+          :disabled="otaRunning"
+        >
+          🔧 Aggiorna Firmware / Kernel
+        </button>
       </div>
     </div>
 
@@ -302,6 +370,17 @@ const otaStatusLabel = computed(() => {
     failed: 'Fallito ❌',
   }
   return map[otaStatus.value.status] || otaStatus.value.status
+})
+
+const otaModeLabel = computed(() => {
+  const map = {
+    app: 'Applicazione',
+    system_safe: 'Sistema OS (apt)',
+    drivers: 'Driver Periferiche',
+    system_firmware: 'Firmware / Kernel',
+    file: 'Da file/URL',
+  }
+  return map[otaStatus.value.mode] || otaStatus.value.mode
 })
 
 async function loadOtaStatus() {
@@ -409,6 +488,55 @@ async function applyUploaded() {
     }
   } catch (e) {
     showError(extractApiError(e, 'Errore apply package'))
+  }
+}
+
+// ─── OTA da URL ───────────────────────────────────────────────────────────────
+const fetchUrl = ref('')
+const fetchUrlBusy = ref(false)
+
+async function fetchPackageFromUrl() {
+  const url = fetchUrl.value.trim()
+  if (!url) return
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    uploadError.value = 'URL non valido. Usa http:// o https://'
+    return
+  }
+  if (!url.toLowerCase().endsWith('.zip') && !url.toLowerCase().endsWith('.tar.gz')) {
+    uploadError.value = "L'URL deve puntare a un file .zip o .tar.gz"
+    return
+  }
+  fetchUrlBusy.value = true
+  uploadError.value = ''
+  try {
+    const api = getApi()
+    await guardedCall(() => api.post('/system/ota/fetch_url', { url }))
+    fetchUrl.value = ''
+    await loadOtaStatus()
+  } catch (e) {
+    uploadError.value = extractApiError(e, 'Errore download package da URL')
+  } finally {
+    fetchUrlBusy.value = false
+  }
+}
+
+async function confirmAndStartFirmware() {
+  if (!confirm(
+    'Aggiornare firmware e kernel Raspberry Pi?\n\n' +
+    '⚠️ Questa operazione modifica componenti critici del sistema operativo.\n' +
+    'È fortemente consigliato riavviare la GufoBox al termine.\n\n' +
+    'Continuare?'
+  )) return
+  clearFeedback()
+  try {
+    const api = getApi()
+    await guardedCall(() => api.post('/system/ota/start', { mode: 'system_firmware' }))
+    setTimeout(loadOtaStatus, 2000)
+    if (!otaPollInterval) {
+      otaPollInterval = setInterval(loadOtaStatus, 3000)
+    }
+  } catch (e) {
+    showError(extractApiError(e, 'Errore avvio aggiornamento firmware'))
   }
 }
 
@@ -982,4 +1110,63 @@ onUnmounted(() => {
   font-size: 0.9rem;
   margin-bottom: 12px;
 }
+
+/* Subsection within a card */
+.ota-subsection {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid #3a3a48;
+}
+
+.subsection-title {
+  margin: 0 0 12px 0;
+  color: #ccc;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+/* URL fetch area */
+.url-fetch-area {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.url-fetch-label {
+  color: #aaa;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.input-url {
+  flex: 1;
+  min-width: 200px;
+  background: #1e1e26;
+  border: 1px solid #3a3a48;
+  color: #fff;
+  padding: 9px 12px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  box-sizing: border-box;
+}
+
+.input-url:focus { outline: none; border-color: #ffd27b; }
+.input-url:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.btn-fetch-url { background: #00838f; }
+
+/* Warning variant of ota-info-box */
+.ota-info-warning {
+  background: rgba(229,57,53,0.08);
+  border-color: rgba(229,57,53,0.3);
+}
+
+.ota-info-warning strong { color: #ff8a80; }
+
+/* Coloured OTA buttons */
+.btn-drivers  { background: #6a1b9a; }
+.btn-system   { background: #1565c0; }
+.btn-firmware { background: #bf360c; }
 </style>

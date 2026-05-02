@@ -2,9 +2,13 @@ import io
 import os
 import json
 import shutil
+import stat
 import tarfile
 import tempfile
 import threading
+import urllib.request
+import urllib.error
+import urllib.parse
 import zipfile
 from datetime import datetime
 
@@ -287,6 +291,8 @@ def _create_backup():
     """
     Crea un backup dell'app nella BACKUP_DIR.
     Esclude .git, __pycache__, node_modules e data/.
+    Salta i file speciali (named pipe/FIFO, socket, device file, ecc.) per evitare
+    errori durante la copia — questi artefatti di runtime non devono bloccare l'aggiornamento.
     """
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_name = f"gufobox_backup_{ts}"
@@ -294,7 +300,22 @@ def _create_backup():
     _ota_log(f"Creazione backup in {backup_path}...")
     try:
         def _ignore(src, names):
-            return {n for n in names if n in _BACKUP_EXCLUSIONS}
+            excluded = set()
+            for n in names:
+                if n in _BACKUP_EXCLUSIONS:
+                    excluded.add(n)
+                    continue
+                full_path = os.path.join(src, n)
+                try:
+                    st = os.lstat(full_path)
+                    mode = st.st_mode
+                    # Salta file speciali: pipe/FIFO, socket, block/char device
+                    if not (stat.S_ISREG(mode) or stat.S_ISDIR(mode) or stat.S_ISLNK(mode)):
+                        _ota_log(f"File speciale escluso dal backup: {full_path} (tipo: {oct(stat.S_IFMT(mode))})")
+                        excluded.add(n)
+                except OSError:
+                    pass
+            return excluded
         shutil.copytree(BASE_DIR, backup_path, ignore=_ignore)
         _ota_log(f"Backup completato: {backup_name}")
         return backup_name
@@ -369,6 +390,76 @@ def _run_ota(mode):
                     _ota_log(f"Avviso: {err}")
                 _progress(pct, f"Completato: {' '.join(cmd[:3])}")
 
+        elif mode == "drivers":
+            # Aggiornamento driver periferiche: reinstalla i pacchetti del kernel e
+            # i moduli audio/GPIO/seriali tramite apt-get.
+            _progress(20, "Aggiornamento driver periferiche — apt-get update...")
+            code, out, err = run_cmd(["sudo", "apt-get", "update", "-y"], timeout=180)
+            _ota_log(f"apt-get update: code={code}")
+            if code != 0:
+                _ota_log(f"Avviso apt-get update: {err}")
+            _progress(40, "Installazione aggiornamenti driver...")
+            driver_pkgs = [
+                "linux-modules-extra-raspi",
+                "raspi-config",
+                "alsa-utils",
+                "libasound2",
+                "python3-rpi.gpio",
+                "python3-spidev",
+                "python3-smbus",
+                "i2c-tools",
+            ]
+            # Installa solo i pacchetti disponibili; ignora quelli non presenti
+            code, out, err = run_cmd(
+                ["sudo", "apt-get", "install", "-y", "--only-upgrade"] + driver_pkgs,
+                timeout=300,
+            )
+            _ota_log(f"apt-get install driver: code={code}")
+            if code != 0:
+                _ota_log(f"Avviso driver install: {err}")
+            _progress(80, "Aggiornamento moduli kernel...")
+            code, out, err = run_cmd(
+                ["sudo", "depmod", "-a"], timeout=60
+            )
+            _ota_log(f"depmod: code={code}")
+            _progress(90, "Driver aggiornati")
+
+        elif mode == "system_firmware":
+            # Aggiornamento firmware/kernel Raspberry Pi.
+            # Usa rpi-update se disponibile; altrimenti aggiorna via apt-get.
+            _progress(20, "Aggiornamento firmware sistema — apt-get update...")
+            code, out, err = run_cmd(["sudo", "apt-get", "update", "-y"], timeout=180)
+            _ota_log(f"apt-get update: code={code}")
+            if code != 0:
+                _ota_log(f"Avviso apt-get update: {err}")
+
+            _progress(35, "Aggiornamento pacchetti firmware/kernel via apt...")
+            firmware_pkgs = [
+                "raspberrypi-bootloader",
+                "raspberrypi-kernel",
+                "firmware-brcm80211",
+            ]
+            code, out, err = run_cmd(
+                ["sudo", "apt-get", "install", "-y", "--only-upgrade"] + firmware_pkgs,
+                timeout=300,
+            )
+            _ota_log(f"apt-get install firmware: code={code}")
+            if code != 0:
+                _ota_log(f"Avviso firmware apt: {err}")
+
+            _progress(65, "Verifica rpi-update...")
+            if shutil.which("rpi-update"):
+                _progress(70, "rpi-update in corso (potrebbe richiedere riavvio)...")
+                code, out, err = run_cmd(
+                    ["sudo", "rpi-update"], timeout=600
+                )
+                _ota_log(f"rpi-update: code={code} out={out[:500] if out else ''} err={err[:200] if err else ''}")
+                if code != 0:
+                    _ota_log(f"Avviso rpi-update: {err}")
+            else:
+                _ota_log("rpi-update non trovato — firmware aggiornato solo via apt")
+            _progress(90, "Firmware/kernel aggiornati — riavvio consigliato")
+
         else:
             raise RuntimeError(f"Modalità OTA non supportata: {mode}")
 
@@ -398,16 +489,17 @@ def _run_ota(mode):
 def api_ota_start():
     """
     Avvia un aggiornamento OTA in background.
-    Payload: {"mode": "app" | "system_safe"}
+    Payload: {"mode": "app" | "system_safe" | "drivers" | "system_firmware"}
     """
     if not _ota_lock.acquire(blocking=False):
         return jsonify({"error": "Un aggiornamento è già in corso"}), 409
 
     data = request.get_json(silent=True) or {}
     mode = data.get("mode", "app")
-    if mode not in ("app", "system_safe"):
+    _OTA_VALID_MODES = ("app", "system_safe", "drivers", "system_firmware")
+    if mode not in _OTA_VALID_MODES:
         _ota_lock.release()
-        return jsonify({"error": f"Modalità non supportata: {mode}. Usa 'app' o 'system_safe'"}), 400
+        return jsonify({"error": f"Modalità non supportata: {mode}. Usa: {', '.join(_OTA_VALID_MODES)}"}), 400
 
     def _worker():
         try:
@@ -893,9 +985,97 @@ def api_ota_apply_uploaded():
     return jsonify({"status": "started", "filename": staged_filename})
 
 
-# =========================================================
-# STANDBY — Stato e controllo
-# =========================================================
+# Allowed URL schemes for OTA fetch
+_OTA_FETCH_ALLOWED_SCHEMES = {"http", "https"}
+
+
+@system_bp.route("/system/ota/fetch_url", methods=["POST"])
+def api_ota_fetch_url():
+    """
+    Scarica un package OTA da un URL remoto e lo mette in staging.
+
+    Payload JSON: {"url": "https://example.com/gufobox-update.zip"}
+
+    Accetta solo URL http/https con estensione .zip o .tar.gz.
+    Dimensione massima: OTA_MAX_PACKAGE_BYTES (100 MB).
+    """
+    data = request.get_json(silent=True) or {}
+    url = str(data.get("url", "")).strip()
+    if not url:
+        return jsonify({"error": "Campo 'url' mancante o vuoto"}), 400
+
+    # Validate scheme
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in _OTA_FETCH_ALLOWED_SCHEMES:
+        return jsonify({"error": f"Schema URL non consentito: '{parsed.scheme}'. Usa http o https"}), 400
+
+    # Validate extension from URL path
+    url_path = parsed.path.lower()
+    ext = None
+    if url_path.endswith(".tar.gz"):
+        ext = ".tar.gz"
+    elif url_path.endswith(".zip"):
+        ext = ".zip"
+    if ext is None:
+        return jsonify({"error": "URL deve puntare a un file .zip o .tar.gz"}), 400
+
+    # Download to staging
+    original_name = os.path.basename(parsed.path) or f"remote_package{ext}"
+    staged_name = "staged_package" + ext
+    staged_path = os.path.join(OTA_STAGING_DIR, staged_name)
+
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "GufoBox-OTA/1.0"})
+        size_bytes = 0
+        with urllib.request.urlopen(req, timeout=60) as response:
+            with open(staged_path, "wb") as out:
+                while True:
+                    chunk = response.read(OTA_UPLOAD_CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    size_bytes += len(chunk)
+                    if size_bytes > OTA_MAX_PACKAGE_BYTES:
+                        try:
+                            os.remove(staged_path)
+                        except OSError:
+                            pass
+                        return jsonify({
+                            "error": (
+                                f"File troppo grande (max {OTA_MAX_PACKAGE_BYTES // (1024*1024)} MB)."
+                            )
+                        }), 413
+                    out.write(chunk)
+    except urllib.error.URLError as e:
+        log_event("ota", "warning", f"OTA fetch_url fallito: {e}", {"url": url})
+        return jsonify({"error": f"Impossibile scaricare il package: {e}"}), 502
+    except Exception as e:
+        log(f"Errore download package OTA da URL: {e}", "warning")
+        return jsonify({"error": "Errore durante il download del package"}), 500
+
+    # Update ota_state (same as upload)
+    ota_state = _load_ota_state()
+    ota_state.update({
+        "status": "uploaded",
+        "running": False,
+        "mode": "file",
+        "staged_filename": original_name,
+        "staged_at": datetime.now().isoformat(),
+        "error": None,
+        "description": f"Package '{original_name}' scaricato da URL, pronto per la validazione.",
+    })
+    _save_ota_state(ota_state)
+    _ota_log(f"Package OTA scaricato da URL: {url} ({size_bytes} bytes) → {staged_name}")
+    log_event("ota", "info", f"Package OTA scaricato da URL: {url}", {
+        "url": url, "filename": original_name, "size_bytes": size_bytes, "ext": ext,
+    })
+
+    return jsonify({
+        "status": "uploaded",
+        "filename": original_name,
+        "size_bytes": size_bytes,
+        "ext": ext,
+        "source": "url",
+    })
 
 @system_bp.route("/system/standby", methods=["GET"])
 def api_standby_status():

@@ -405,3 +405,20 @@ class TestOtaFetchUrl:
         assert state["mode"] == "file"
         assert state["staged_filename"] is not None
         assert state["staged_at"] is not None
+
+    def test_localhost_url_blocked_ssrf(self, client, staging_dir, state_file):
+        """URLs pointing to localhost/internal hosts must be rejected (SSRF prevention)."""
+        blocked_urls = [
+            "http://localhost/update.zip",
+            "http://127.0.0.1/update.zip",
+        ]
+        for url in blocked_urls:
+            resp = client.post(
+                "/api/system/ota/fetch_url",
+                json={"url": url},
+                content_type="application/json",
+            )
+            assert resp.status_code == 400, f"Expected 400 for SSRF URL {url!r}, got {resp.status_code}"
+            err = resp.get_json()["error"].lower()
+            assert "host" in err or "consentito" in err or "bloccato" in err, \
+                f"Expected host-related error for {url!r}, got: {err!r}"

@@ -988,6 +988,38 @@ def api_ota_apply_uploaded():
 # Allowed URL schemes for OTA fetch
 _OTA_FETCH_ALLOWED_SCHEMES = {"http", "https"}
 
+# Private/internal IP ranges that must not be reachable via OTA fetch (SSRF prevention)
+_OTA_FETCH_BLOCKED_NETS = [
+    # loopback
+    ("127.", ),
+    # link-local
+    ("169.254.", ),
+    # RFC1918 private
+    ("10.", ),
+    # Class B private 172.16.0.0/12
+    tuple(f"172.{i}." for i in range(16, 32)),
+    # Class C private
+    ("192.168.", ),
+    # IPv6 loopback / link-local
+    ("::1", "fe80:", "fc", "fd"),
+]
+
+def _is_blocked_host(hostname: str) -> bool:
+    """Return True if the host resolves to a private/internal IP (SSRF guard)."""
+    import socket
+    blocked_prefixes = []
+    for group in _OTA_FETCH_BLOCKED_NETS:
+        blocked_prefixes.extend(group)
+    # Block localhost by name as well
+    if hostname.lower() in ("localhost", "localhost.localdomain"):
+        return True
+    try:
+        addr = socket.gethostbyname(hostname)
+        return any(addr.startswith(prefix) for prefix in blocked_prefixes)
+    except socket.gaierror:
+        # Cannot resolve — treat as blocked to be safe
+        return True
+
 
 @system_bp.route("/system/ota/fetch_url", methods=["POST"])
 def api_ota_fetch_url():
@@ -1019,15 +1051,26 @@ def api_ota_fetch_url():
     if ext is None:
         return jsonify({"error": "URL deve puntare a un file .zip o .tar.gz"}), 400
 
+    # SSRF prevention: reject requests to internal/private hosts
+    hostname = parsed.hostname or ""
+    if not hostname or _is_blocked_host(hostname):
+        log_event("ota", "warning", "OTA fetch_url rifiutato: host bloccato", {"url": url})
+        return jsonify({"error": "Host non raggiungibile o non consentito"}), 400
+
     # Download to staging
     original_name = os.path.basename(parsed.path) or f"remote_package{ext}"
     staged_name = "staged_package" + ext
     staged_path = os.path.join(OTA_STAGING_DIR, staged_name)
 
     try:
+        import ssl
+        ctx = ssl.create_default_context() if parsed.scheme == "https" else None
         req = urllib.request.Request(url, headers={"User-Agent": "GufoBox-OTA/1.0"})
         size_bytes = 0
-        with urllib.request.urlopen(req, timeout=60) as response:
+        open_kwargs = {"timeout": 60}
+        if ctx is not None:
+            open_kwargs["context"] = ctx
+        with urllib.request.urlopen(req, **open_kwargs) as response:
             with open(staged_path, "wb") as out:
                 while True:
                     chunk = response.read(OTA_UPLOAD_CHUNK_SIZE)
@@ -1046,8 +1089,8 @@ def api_ota_fetch_url():
                         }), 413
                     out.write(chunk)
     except urllib.error.URLError as e:
-        log_event("ota", "warning", f"OTA fetch_url fallito: {e}", {"url": url})
-        return jsonify({"error": f"Impossibile scaricare il package: {e}"}), 502
+        log_event("ota", "warning", f"OTA fetch_url fallito", {"url": url, "error": str(e)})
+        return jsonify({"error": "Impossibile scaricare il package: errore di rete o URL non raggiungibile"}), 502
     except Exception as e:
         log(f"Errore download package OTA da URL: {e}", "warning")
         return jsonify({"error": "Errore durante il download del package"}), 500

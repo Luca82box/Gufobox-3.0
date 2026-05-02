@@ -2,13 +2,18 @@
 api/tts.py - Offline Piper TTS fallback + routing
 
 Endpoints:
-  GET  /api/tts/offline/status    - Piper status (installed, voices, cache)
-  GET  /api/tts/offline/voices    - list voices in PIPER_VOICES_DIR
-  GET  /api/tts/offline/settings  - read current settings
-  POST /api/tts/offline/settings  - save settings
-  POST /api/tts/offline/test      - generate test audio with Piper
-  GET  /api/tts/offline/audio/<f> - serve WAV file from Piper cache
-  POST /api/tts/synthesize        - synthesize text (online -> Piper fallback)
+  GET  /api/tts/offline/status          - Piper status (installed, voices, cache)
+  GET  /api/tts/offline/voices          - list voices in PIPER_VOICES_DIR
+  GET  /api/tts/offline/settings        - read current settings
+  POST /api/tts/offline/settings        - save settings
+  POST /api/tts/offline/test            - generate test audio with Piper
+  GET  /api/tts/offline/audio/<f>       - serve WAV file from Piper cache
+  POST /api/tts/offline/upload          - upload a Piper voice file (.onnx / .onnx.json)
+  POST /api/tts/offline/upload-binary   - upload Piper executable binary
+  GET  /api/tts/offline/suggested-voices - list Italian voices with download URLs
+  POST /api/tts/offline/download-binary - auto-download Piper binary from GitHub releases
+  POST /api/tts/offline/download-voice  - auto-download voice model from HuggingFace
+  POST /api/tts/synthesize              - synthesize text (online -> Piper fallback)
 
 Installing Piper on Raspberry Pi:
   1. Download binary from https://github.com/rhasspy/piper/releases
@@ -517,4 +522,320 @@ def api_tts_offline_upload_binary():
         "status": "ok",
         "piper_executable": PIPER_LOCAL_BIN,
         "piper_available": _piper_available(),
+    })
+
+
+# =========================================================
+# AUTO-DOWNLOAD PIPER BINARY
+# =========================================================
+
+# Allowed domains for Piper binary downloads (prevent SSRF / arbitrary downloads)
+_PIPER_BINARY_ALLOWED_HOSTS = {"github.com", "objects.githubusercontent.com"}
+
+# Allowed domains for voice model downloads
+_PIPER_VOICE_ALLOWED_HOSTS = {
+    "huggingface.co",
+    "cdn-lfs.huggingface.co",
+    "cdn-lfs-us-1.huggingface.co",
+    "cdn-lfs-eu-1.huggingface.co",
+}
+
+# Max size for binary download: 150 MB
+_PIPER_BINARY_MAX_BYTES = 150 * 1024 * 1024
+
+# Chunk size for streaming downloads
+_DOWNLOAD_CHUNK_SIZE = 64 * 1024
+
+
+def _checked_download(url: str, dest_path: str, allowed_hosts: set, max_bytes: int,
+                       expected_dir: str = None, validate_fn=None) -> dict:
+    """
+    Scarica un file da *url* in modo sicuro, validando:
+    - schema http/https
+    - host nella allowlist (previene SSRF)
+    - dimensione massima
+    - dest_path derivato da config + nome validato (previene path traversal)
+
+    expected_dir: se specificato, verifica che dest_path sia all'interno di
+                  questa directory (protezione aggiuntiva contro path traversal).
+    validate_fn:  funzione opzionale chiamata con dest_path dopo il download
+                  per validazioni aggiuntive sul file salvato.
+
+    Ritorna {"ok": True, "size": N} oppure solleva ValueError/RuntimeError.
+    """
+    import ssl
+    import urllib.parse
+    import urllib.request
+
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError("Schema URL non consentito. Usa solo http o https.")
+
+    hostname = (parsed.hostname or "").lower()
+    if not hostname:
+        raise ValueError("URL non valido: hostname mancante.")
+    if hostname not in allowed_hosts:
+        raise ValueError(
+            "Provider non consentito. "
+            f"Il download è permesso solo da: {', '.join(sorted(allowed_hosts))}."
+        )
+
+    # Verifica che dest_path sia all'interno di expected_dir (se fornito)
+    if expected_dir is not None:
+        real_dest = os.path.realpath(dest_path)
+        real_expected = os.path.realpath(expected_dir)
+        if real_dest != real_expected and not real_dest.startswith(real_expected + os.sep):
+            raise ValueError("Percorso di destinazione non consentito.")
+
+    # Ricostruisci l'URL esclusivamente dai componenti validati (schema + host + path + query)
+    # per eliminare ogni possibilità che dati utente non validati raggiungano urlopen.
+    safe_url = urllib.parse.urlunparse((
+        parsed.scheme,
+        parsed.netloc,
+        parsed.path,
+        parsed.params,
+        parsed.query,
+        "",  # strip fragment
+    ))
+
+    ctx = ssl.create_default_context() if parsed.scheme == "https" else None
+    req = urllib.request.Request(safe_url, headers={"User-Agent": "GufoBox-Piper-Downloader/1.0"})
+    open_kwargs: dict = {"timeout": 120}
+    if ctx is not None:
+        open_kwargs["context"] = ctx
+
+    # Use the fully-validated safe_url (host-allowlisted, reconstructed) -- not raw user input.
+    # dest_path comes from os.path.join(trusted_config_dir, regex-validated_filename) in callers.
+    safe_dest = os.path.realpath(dest_path)
+    size_bytes = 0
+    try:
+        with urllib.request.urlopen(req, **open_kwargs) as response:  # noqa: S310 -- host validated above
+            with open(safe_dest, "wb") as out:
+                while True:
+                    chunk = response.read(_DOWNLOAD_CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    size_bytes += len(chunk)
+                    if size_bytes > max_bytes:
+                        try:
+                            os.remove(safe_dest)
+                        except OSError:
+                            pass
+                        raise ValueError(
+                            f"File troppo grande (max {max_bytes // (1024 * 1024)} MB)."
+                        )
+                    out.write(chunk)
+    except ValueError:
+        raise
+    except Exception as exc:
+        log(f"Piper download error (network/IO): {exc}", "error")
+        raise RuntimeError("Errore durante il download. Controlla i log del server.") from exc
+
+    if validate_fn:
+        validate_fn(safe_dest)
+
+    return {"ok": True, "size": size_bytes}
+
+
+@tts_bp.route("/tts/offline/download-binary", methods=["POST"])
+def api_tts_offline_download_binary():
+    """Scarica e installa automaticamente il binario Piper da GitHub releases.
+
+    Payload JSON:
+      {"url": "https://github.com/rhasspy/piper/releases/download/.../piper_linux_aarch64.tar.gz"}
+
+    Se ``url`` è omesso viene usato l'URL predefinito per Raspberry Pi (aarch64).
+    Il binario viene estratto dall'archivio tar.gz e salvato in ``data/piper_bin/piper``.
+    """
+    import tarfile
+    import tempfile
+
+    data = request.get_json(silent=True) or {}
+    # Default URL per Raspberry Pi 4/5 a 64 bit (aarch64)
+    default_url = (
+        "https://github.com/rhasspy/piper/releases/download/"
+        "2023.11.14-2/piper_linux_aarch64.tar.gz"
+    )
+    url = str(data.get("url", default_url)).strip()
+
+    log(f"Avvio download binario Piper da: {url}", "info")
+
+    with tempfile.TemporaryDirectory(prefix="gufobox_piper_dl_") as tmpdir:
+        archive_path = os.path.join(tmpdir, "piper.tar.gz")
+        try:
+            _checked_download(
+                url, archive_path, _PIPER_BINARY_ALLOWED_HOSTS, _PIPER_BINARY_MAX_BYTES,
+                expected_dir=tmpdir,
+            )
+        except ValueError as exc:
+            log(f"Piper binary download URL error: {exc}", "warning")
+            return jsonify({"error": "URL non valido o provider non autorizzato."}), 400
+        except RuntimeError:
+            return jsonify({"error": "Errore durante il download. Controlla i log del server."}), 502
+
+        # Estrai il binario dall'archivio tar.gz
+        try:
+            with tarfile.open(archive_path, "r:gz") as tf:
+                # Cerca il file eseguibile 'piper' o 'piper/piper' nell'archivio
+                piper_member = None
+                for m in tf.getmembers():
+                    name = m.name.lstrip("./")
+                    # Accetta: "piper", "piper/piper", "piper_linux_aarch64/piper", ecc.
+                    if (name == "piper" or name.endswith("/piper")) and m.isfile():
+                        piper_member = m
+                        break
+                if piper_member is None:
+                    return jsonify({
+                        "error": "Binario 'piper' non trovato nell'archivio tar.gz."
+                    }), 422
+
+                # Estrai in una posizione temporanea sicura
+                extracted_path = os.path.join(tmpdir, "piper_extracted")
+                with tf.extractfile(piper_member) as src, open(extracted_path, "wb") as dst:
+                    while True:
+                        chunk = src.read(_DOWNLOAD_CHUNK_SIZE)
+                        if not chunk:
+                            break
+                        dst.write(chunk)
+        except (tarfile.TarError, Exception) as exc:
+            log(f"Piper binary archive extraction error: {exc}", "error")
+            return jsonify({"error": "Errore durante l'estrazione dell'archivio tar.gz."}), 422
+
+        # Salva il binario in PIPER_LOCAL_BIN
+        try:
+            local_bin_dir = _cfg.PIPER_LOCAL_BIN_DIR
+            local_bin = _cfg.PIPER_LOCAL_BIN
+            os.makedirs(local_bin_dir, exist_ok=True)
+            import shutil
+            shutil.copy2(extracted_path, local_bin)
+            current_mode = os.stat(local_bin).st_mode
+            os.chmod(local_bin, current_mode | 0o111)
+        except OSError as exc:
+            log(f"Piper binary save error: {exc}", "error")
+            return jsonify({"error": "Errore durante il salvataggio del binario."}), 500
+
+    # Aggiorna il path eseguibile runtime
+    with _piper_exe_lock:
+        _cfg.PIPER_EXECUTABLE = _cfg.PIPER_LOCAL_BIN
+
+    log(f"Binario Piper installato automaticamente: {_cfg.PIPER_LOCAL_BIN}", "info")
+    return jsonify({
+        "status": "ok",
+        "piper_executable": _cfg.PIPER_LOCAL_BIN,
+        "piper_available": _piper_available(),
+        "url": url,
+    })
+
+
+# =========================================================
+# AUTO-DOWNLOAD PIPER VOICE MODEL
+# =========================================================
+
+# Max size for a single voice model file: 300 MB (some ONNX models are large)
+_PIPER_VOICE_MAX_BYTES = 300 * 1024 * 1024
+
+# Italian voices suggested by default
+PIPER_SUGGESTED_VOICES = [
+    {
+        "name": "it_IT-paola-medium",
+        "onnx_url": (
+            "https://huggingface.co/rhasspy/piper-voices/resolve/main/"
+            "it/it_IT/paola/medium/it_IT-paola-medium.onnx"
+        ),
+        "config_url": (
+            "https://huggingface.co/rhasspy/piper-voices/resolve/main/"
+            "it/it_IT/paola/medium/it_IT-paola-medium.onnx.json"
+        ),
+        "description": "Italiano — Paola (qualità media, consigliata)",
+    },
+    {
+        "name": "it_IT-riccardo-x_low",
+        "onnx_url": (
+            "https://huggingface.co/rhasspy/piper-voices/resolve/main/"
+            "it/it_IT/riccardo/x_low/it_IT-riccardo-x_low.onnx"
+        ),
+        "config_url": (
+            "https://huggingface.co/rhasspy/piper-voices/resolve/main/"
+            "it/it_IT/riccardo/x_low/it_IT-riccardo-x_low.onnx.json"
+        ),
+        "description": "Italiano — Riccardo (qualità bassa, più veloce)",
+    },
+]
+
+
+@tts_bp.route("/tts/offline/suggested-voices", methods=["GET"])
+def api_tts_offline_suggested_voices():
+    """Restituisce l'elenco delle voci Piper italiane suggerite con URL di download."""
+    return jsonify({"voices": PIPER_SUGGESTED_VOICES})
+
+
+@tts_bp.route("/tts/offline/download-voice", methods=["POST"])
+def api_tts_offline_download_voice():
+    """Scarica automaticamente un modello voce Piper da HuggingFace.
+
+    Payload JSON:
+      {
+        "onnx_url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/it/it_IT/paola/medium/it_IT-paola-medium.onnx",
+        "config_url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/it/it_IT/paola/medium/it_IT-paola-medium.onnx.json"
+      }
+
+    Oppure usa il nome di una voce suggerita:
+      {"name": "it_IT-paola-medium"}
+
+    Entrambi i file (.onnx e .onnx.json) vengono salvati in ``data/piper_voices/``.
+    """
+    data = request.get_json(silent=True) or {}
+
+    # Se viene fornito solo il nome, cerca tra le voci suggerite
+    voice_name = str(data.get("name", "")).strip()
+    if voice_name:
+        match = next((v for v in PIPER_SUGGESTED_VOICES if v["name"] == voice_name), None)
+        if not match:
+            return jsonify({"error": f"Voce suggerita '{voice_name}' non trovata."}), 404
+        onnx_url = match["onnx_url"]
+        config_url = match["config_url"]
+    else:
+        onnx_url = str(data.get("onnx_url", "")).strip()
+        config_url = str(data.get("config_url", "")).strip()
+
+    if not onnx_url or not config_url:
+        return jsonify({
+            "error": "Specificare 'name' (voce suggerita) oppure 'onnx_url' e 'config_url'."
+        }), 400
+
+    # Ricava il nome del file dall'URL per validarlo
+    import urllib.parse
+    onnx_filename = os.path.basename(urllib.parse.urlparse(onnx_url).path)
+    config_filename = os.path.basename(urllib.parse.urlparse(config_url).path)
+
+    try:
+        safe_onnx = _validate_piper_upload_filename(onnx_filename)
+        safe_config = _validate_piper_upload_filename(config_filename)
+    except ValueError as exc:
+        log(f"Piper voice filename validation error: {exc}", "warning")
+        return jsonify({"error": "Nome file voce non valido o non consentito."}), 400
+
+    voices_dir = _cfg.PIPER_VOICES_DIR
+    os.makedirs(voices_dir, exist_ok=True)
+    results = []
+
+    for url_to_dl, safe_name in [(onnx_url, safe_onnx), (config_url, safe_config)]:
+        dest_path = os.path.join(voices_dir, safe_name)
+        try:
+            info = _checked_download(
+                url_to_dl, dest_path, _PIPER_VOICE_ALLOWED_HOSTS, _PIPER_VOICE_MAX_BYTES,
+                expected_dir=voices_dir,
+            )
+            results.append({"file": safe_name, "ok": True, "size": info["size"]})
+            log(f"Voce Piper scaricata: {safe_name} ({info['size']} bytes)", "info")
+        except ValueError as exc:
+            log(f"Piper voice download URL error: {exc}", "warning")
+            return jsonify({"error": "URL non valido o provider non autorizzato."}), 400
+        except RuntimeError:
+            return jsonify({"error": "Errore durante il download. Controlla i log del server."}), 502
+
+    return jsonify({
+        "status": "ok",
+        "files": results,
+        "voices": _list_voices(),
     })

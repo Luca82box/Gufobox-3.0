@@ -64,12 +64,12 @@
       <button class="btn-secondary" @click="loadStatus">🔄 Ricarica stato</button>
     </div>
 
-    <!-- Piper binary upload card -->
+    <!-- Piper binary provision card -->
     <div class="card">
-      <h3>⚙️ Carica binario Piper</h3>
+      <h3>⚙️ Installa binario Piper</h3>
       <p class="hint">
-        Carica il file eseguibile <code>piper</code> direttamente dal browser
-        (estratto da <code>piper_linux_aarch64.tar.gz</code> o equivalente).
+        Installa automaticamente il binario Piper scaricandolo da GitHub Releases,
+        oppure carica manualmente il file estratto dall'archivio tar.gz.
         Il binario viene salvato in <code>data/piper_bin/piper</code> e reso eseguibile.
       </p>
 
@@ -77,36 +77,76 @@
         ✅ Binario locale presente: <code>{{ status.piper_local_bin }}</code>
       </div>
 
-      <div class="form-group" style="margin-top:12px;">
-        <label>Seleziona file eseguibile Piper</label>
-        <input
-          ref="binaryInputRef"
-          type="file"
-          class="file-input"
-          @change="onBinarySelected"
-        />
-        <p v-if="selectedBinary" class="hint">
-          File selezionato: {{ selectedBinary.name }}
-          ({{ formatBytes(selectedBinary.size) }})
+      <!-- Auto-download section -->
+      <div class="provision-section">
+        <h4>🌐 Download automatico da GitHub (consigliato)</h4>
+        <p class="hint">
+          Scarica automaticamente il binario Piper per Raspberry Pi (aarch64).
+          Richiede connessione internet. Usa l'URL predefinito o inserisci un link personalizzato.
         </p>
+        <div class="form-group">
+          <label>URL release Piper (lascia vuoto per il default aarch64)</label>
+          <input
+            type="url"
+            v-model="binaryDownloadUrl"
+            class="text-input"
+            placeholder="https://github.com/rhasspy/piper/releases/download/.../piper_linux_aarch64.tar.gz"
+            :disabled="downloadingBinary"
+          />
+          <p class="hint">Default: <code>piper_linux_aarch64.tar.gz</code> — per Raspberry Pi 4/5 a 64-bit.</p>
+        </div>
+        <div class="form-actions">
+          <button
+            class="btn-upload btn-auto-dl"
+            @click="autoDownloadPiperBinary"
+            :disabled="downloadingBinary || uploadingBinary"
+          >
+            {{ downloadingBinary ? '⏳ Download in corso...' : '⬇️ Scarica e installa' }}
+          </button>
+        </div>
+        <div v-if="binaryDownloadResult" class="upload-results">
+          <div class="upload-result-item" :class="binaryDownloadResult.ok ? 'result-ok' : 'result-err'">
+            {{ binaryDownloadResult.ok ? '✅' : '❌' }} {{ binaryDownloadResult.message }}
+          </div>
+        </div>
       </div>
 
-      <div class="form-actions">
-        <button
-          class="btn-upload"
-          @click="uploadPiperBinary"
-          :disabled="uploadingBinary || !selectedBinary"
-        >
-          {{ uploadingBinary ? '⏳ Caricamento...' : '⚙️ Carica binario' }}
-        </button>
-      </div>
-
-      <div v-if="binaryUploadResult" class="upload-results">
-        <div
-          class="upload-result-item"
-          :class="binaryUploadResult.ok ? 'result-ok' : 'result-err'"
-        >
-          {{ binaryUploadResult.ok ? '✅' : '❌' }} {{ binaryUploadResult.message }}
+      <!-- Manual upload section -->
+      <div class="provision-section provision-section--alt">
+        <h4>📂 Caricamento manuale (offline / personalizzato)</h4>
+        <p class="hint">
+          Carica il file eseguibile <code>piper</code> estratto da <code>piper_linux_aarch64.tar.gz</code>
+          o equivalente, se il dispositivo non ha accesso a internet.
+        </p>
+        <div class="form-group">
+          <label>Seleziona file eseguibile Piper</label>
+          <input
+            ref="binaryInputRef"
+            type="file"
+            class="file-input"
+            @change="onBinarySelected"
+          />
+          <p v-if="selectedBinary" class="hint">
+            File selezionato: {{ selectedBinary.name }}
+            ({{ formatBytes(selectedBinary.size) }})
+          </p>
+        </div>
+        <div class="form-actions">
+          <button
+            class="btn-upload"
+            @click="uploadPiperBinary"
+            :disabled="uploadingBinary || !selectedBinary || downloadingBinary"
+          >
+            {{ uploadingBinary ? '⏳ Caricamento...' : '⚙️ Carica binario' }}
+          </button>
+        </div>
+        <div v-if="binaryUploadResult" class="upload-results">
+          <div
+            class="upload-result-item"
+            :class="binaryUploadResult.ok ? 'result-ok' : 'result-err'"
+          >
+            {{ binaryUploadResult.ok ? '✅' : '❌' }} {{ binaryUploadResult.message }}
+          </div>
         </div>
       </div>
     </div>
@@ -156,48 +196,84 @@
       </div>
     </div>
 
-    <!-- Piper file upload card -->
+    <!-- Piper voice provision card -->
     <div class="card">
-      <h3>📤 Carica file voce Piper</h3>
+      <h3>🎙️ Installa modello voce Piper</h3>
       <p class="hint">
-        Carica un modello voce Piper (<code>.onnx</code> + <code>.onnx.json</code>) direttamente
-        dal browser. I file vengono salvati in <code>data/piper_voices/</code>.
+        Scarica automaticamente una voce italiana da HuggingFace,
+        oppure carica manualmente i file <code>.onnx</code> e <code>.onnx.json</code>.
+        I file vengono salvati in <code>data/piper_voices/</code>.
       </p>
 
-      <div class="form-group">
-        <label>Seleziona file voce (.onnx o .onnx.json)</label>
-        <input
-          ref="fileInputRef"
-          type="file"
-          accept=".onnx,.onnx.json"
-          multiple
-          class="file-input"
-          @change="onFilesSelected"
-        />
-        <p v-if="selectedFiles.length" class="hint">
-          {{ selectedFiles.length }} file selezionato{{ selectedFiles.length > 1 ? 'i' : '' }}:
-          {{ selectedFiles.map(f => f.name).join(', ') }}
+      <!-- Auto-download suggested voices -->
+      <div class="provision-section">
+        <h4>🌐 Scarica voce consigliata (richiede internet)</h4>
+        <div v-if="loadingSuggestedVoices" class="loading-text">Caricamento voci... ⏳</div>
+        <div v-else class="suggested-voices-grid">
+          <div
+            v-for="sv in suggestedVoices"
+            :key="sv.name"
+            class="suggested-voice-item"
+          >
+            <div class="sv-info">
+              <span class="sv-name">{{ sv.name }}</span>
+              <span class="sv-desc">{{ sv.description }}</span>
+            </div>
+            <button
+              class="btn-download-voice"
+              @click="autoDownloadVoice(sv.name)"
+              :disabled="downloadingVoice === sv.name || uploading"
+            >
+              {{ downloadingVoice === sv.name ? '⏳ Download...' : '⬇️ Installa' }}
+            </button>
+          </div>
+        </div>
+        <div v-if="voiceDownloadResult" class="upload-results mt-small">
+          <div class="upload-result-item" :class="voiceDownloadResult.ok ? 'result-ok' : 'result-err'">
+            {{ voiceDownloadResult.ok ? '✅' : '❌' }} {{ voiceDownloadResult.message }}
+          </div>
+        </div>
+      </div>
+
+      <!-- Manual upload section -->
+      <div class="provision-section provision-section--alt">
+        <h4>📂 Caricamento manuale (offline / voce personalizzata)</h4>
+        <p class="hint">
+          Carica i file <code>.onnx</code> + <code>.onnx.json</code> direttamente dal browser.
         </p>
-      </div>
-
-      <div class="form-actions">
-        <button
-          class="btn-upload"
-          @click="uploadPiperFiles"
-          :disabled="uploading || !selectedFiles.length"
-        >
-          {{ uploading ? '⏳ Caricamento...' : '📤 Carica' }}
-        </button>
-      </div>
-
-      <div v-if="uploadResults.length" class="upload-results">
-        <div
-          v-for="r in uploadResults"
-          :key="r.name"
-          class="upload-result-item"
-          :class="r.ok ? 'result-ok' : 'result-err'"
-        >
-          {{ r.ok ? '✅' : '❌' }} {{ r.name }}: {{ r.message }}
+        <div class="form-group">
+          <label>Seleziona file voce (.onnx o .onnx.json)</label>
+          <input
+            ref="fileInputRef"
+            type="file"
+            accept=".onnx,.onnx.json"
+            multiple
+            class="file-input"
+            @change="onFilesSelected"
+          />
+          <p v-if="selectedFiles.length" class="hint">
+            {{ selectedFiles.length }} file selezionato{{ selectedFiles.length > 1 ? 'i' : '' }}:
+            {{ selectedFiles.map(f => f.name).join(', ') }}
+          </p>
+        </div>
+        <div class="form-actions">
+          <button
+            class="btn-upload"
+            @click="uploadPiperFiles"
+            :disabled="uploading || !selectedFiles.length || downloadingVoice"
+          >
+            {{ uploading ? '⏳ Caricamento...' : '📤 Carica' }}
+          </button>
+        </div>
+        <div v-if="uploadResults.length" class="upload-results">
+          <div
+            v-for="r in uploadResults"
+            :key="r.name"
+            class="upload-result-item"
+            :class="r.ok ? 'result-ok' : 'result-err'"
+          >
+            {{ r.ok ? '✅' : '❌' }} {{ r.name }}: {{ r.message }}
+          </div>
         </div>
       </div>
     </div>
@@ -393,6 +469,69 @@ const selectedBinary = ref(null)
 const uploadingBinary = ref(false)
 const binaryUploadResult = ref(null)
 
+// ── Piper binary auto-download ─────────────────────────────────────────────
+const binaryDownloadUrl = ref('')
+const downloadingBinary = ref(false)
+const binaryDownloadResult = ref(null)
+
+async function autoDownloadPiperBinary() {
+  downloadingBinary.value = true
+  binaryDownloadResult.value = null
+  clearFeedback()
+  try {
+    const api = getApi()
+    const payload = binaryDownloadUrl.value.trim() ? { url: binaryDownloadUrl.value.trim() } : {}
+    await guardedCall(() => api.post('/tts/offline/download-binary', payload))
+    binaryDownloadResult.value = { ok: true, message: 'Binario Piper installato con successo.' }
+    showSuccess('Binario Piper scaricato e installato!')
+    await loadStatus()
+  } catch (e) {
+    const msg = extractApiError(e, 'Errore download binario')
+    binaryDownloadResult.value = { ok: false, message: msg }
+    showError(msg)
+  } finally {
+    downloadingBinary.value = false
+  }
+}
+
+// ── Piper voice auto-download ──────────────────────────────────────────────
+const suggestedVoices = ref([])
+const loadingSuggestedVoices = ref(false)
+const downloadingVoice = ref('')   // name of voice being downloaded, or ''
+const voiceDownloadResult = ref(null)
+
+async function loadSuggestedVoices() {
+  loadingSuggestedVoices.value = true
+  try {
+    const api = getApi()
+    const { data } = await guardedCall(() => api.get('/tts/offline/suggested-voices'))
+    suggestedVoices.value = data?.voices ?? []
+  } catch (e) {
+    suggestedVoices.value = []
+  } finally {
+    loadingSuggestedVoices.value = false
+  }
+}
+
+async function autoDownloadVoice(name) {
+  downloadingVoice.value = name
+  voiceDownloadResult.value = null
+  clearFeedback()
+  try {
+    const api = getApi()
+    await guardedCall(() => api.post('/tts/offline/download-voice', { name }))
+    voiceDownloadResult.value = { ok: true, message: `Voce "${name}" installata con successo.` }
+    showSuccess(`Voce "${name}" scaricata e installata!`)
+    await loadStatus()
+  } catch (e) {
+    const msg = extractApiError(e, 'Errore download voce')
+    voiceDownloadResult.value = { ok: false, message: msg }
+    showError(msg)
+  } finally {
+    downloadingVoice.value = ''
+  }
+}
+
 function onBinarySelected(event) {
   selectedBinary.value = event.target.files?.[0] || null
   binaryUploadResult.value = null
@@ -510,6 +649,7 @@ async function testVoice() {
 onMounted(() => {
   loadStatus()
   loadOpenaiStatus()
+  loadSuggestedVoices()
 })
 </script>
 
@@ -759,4 +899,76 @@ onMounted(() => {
   width: 100%;
   border-radius: 8px;
 }
+
+.provision-section {
+  background: #1e1e26;
+  border-radius: 8px;
+  padding: 15px;
+  margin-top: 15px;
+}
+
+.provision-section h4 {
+  color: #ffd27b;
+  margin: 0 0 10px 0;
+  font-size: 0.95rem;
+}
+
+.provision-section--alt {
+  border: 1px dashed #3a3a48;
+}
+
+.btn-auto-dl {
+  background: #00897b;
+}
+.btn-auto-dl:hover:not(:disabled) { background: #00796b; }
+
+.suggested-voices-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.suggested-voice-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #2a2a35;
+  padding: 10px 14px;
+  border-radius: 8px;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.sv-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sv-name {
+  font-weight: bold;
+  color: #fff;
+  font-size: 0.9rem;
+  font-family: monospace;
+}
+
+.sv-desc {
+  font-size: 0.82rem;
+  color: #aaa;
+}
+
+.btn-download-voice {
+  background: #1565c0;
+  color: white;
+  border: none;
+  padding: 7px 14px;
+  border-radius: 6px;
+  font-weight: bold;
+  cursor: pointer;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+.btn-download-voice:disabled { background: #555; color: #888; cursor: not-allowed; }
+.btn-download-voice:hover:not(:disabled) { background: #1976d2; }
 </style>

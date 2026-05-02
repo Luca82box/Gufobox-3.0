@@ -10,6 +10,7 @@ Endpoints:
   GET  /api/tts/offline/audio/<f>       - serve WAV file from Piper cache
   POST /api/tts/offline/upload          - upload a Piper voice file (.onnx / .onnx.json)
   POST /api/tts/offline/upload-binary   - upload Piper executable binary
+  POST /api/tts/offline/upload-asset    - upload any Piper asset (bin or voices) - folder mode
   GET  /api/tts/offline/suggested-voices - list Italian voices with download URLs
   POST /api/tts/offline/download-binary - auto-download Piper binary from GitHub releases
   POST /api/tts/offline/download-voice  - auto-download voice model from HuggingFace
@@ -521,6 +522,113 @@ def api_tts_offline_upload_binary():
     return jsonify({
         "status": "ok",
         "piper_executable": PIPER_LOCAL_BIN,
+        "piper_available": _piper_available(),
+    })
+
+
+@tts_bp.route("/tts/offline/upload-asset", methods=["POST"])
+def api_tts_offline_upload_asset():
+    """Upload one or more Piper asset files (any type) to a specified target directory.
+
+    Supports the full Piper asset set: executables, shared libraries, voice models
+    (.onnx), config sidecars (.onnx.json), and any other required files.
+    This endpoint enables offline / folder-mode provisioning of Piper without internet
+    access — the admin extracts the Piper release archive and uploads all files at once.
+
+    Form fields (multipart/form-data):
+      files[]:    one or more files to upload
+      target_dir: "bin"    → data/piper_bin/    (executables, shared libs)
+                  "voices" → data/piper_voices/  (voice models, config JSON)
+                  default: "voices"
+
+    Files saved to "bin" are made executable automatically (chmod +x).
+    All filenames are sanitised with werkzeug.secure_filename to prevent path traversal.
+    """
+    target = (request.form.get("target_dir") or "voices").strip().lower()
+    if target == "bin":
+        dest_dir = PIPER_LOCAL_BIN_DIR
+    elif target == "voices":
+        dest_dir = PIPER_VOICES_DIR
+    else:
+        return jsonify({"error": "target_dir non valido. Usa 'bin' o 'voices'."}), 400
+
+    uploaded_files = request.files.getlist("files[]")
+    # Also accept a single 'file' field for convenience
+    if not uploaded_files or all(not f.filename for f in uploaded_files):
+        single = request.files.get("file")
+        if single and single.filename:
+            uploaded_files = [single]
+        else:
+            return jsonify({"error": "Nessun file nella richiesta"}), 400
+
+    try:
+        os.makedirs(dest_dir, exist_ok=True)
+    except OSError as exc:
+        log(f"Piper asset upload: impossibile creare la directory {dest_dir}: {exc}", "error")
+        return jsonify({"error": "Errore nella creazione della directory di destinazione"}), 500
+
+    max_bytes = _cfg.PIPER_MAX_UPLOAD_BYTES
+    real_dest_base = os.path.realpath(dest_dir)
+    results = []
+
+    for upload in uploaded_files:
+        if not upload or not upload.filename:
+            continue
+
+        raw_name = upload.filename
+        safe_name = secure_filename(raw_name)
+        if not safe_name:
+            results.append({"file": raw_name, "ok": False, "error": "Nome file non valido"})
+            continue
+
+        # Guard against oversized uploads
+        upload.seek(0, 2)
+        file_size = upload.tell()
+        upload.seek(0)
+        if file_size > max_bytes:
+            results.append({
+                "file": safe_name, "ok": False,
+                "error": f"File troppo grande (max {max_bytes // (1024 * 1024)} MB)",
+            })
+            continue
+
+        dest_path = os.path.join(dest_dir, safe_name)
+
+        # Extra path-traversal guard: ensure resolved dest is inside dest_dir
+        real_dest_path = os.path.realpath(dest_path)
+        if not real_dest_path.startswith(real_dest_base + os.sep) and real_dest_path != real_dest_base:
+            log(f"Piper asset upload: percorso non consentito — {safe_name}", "warning")
+            results.append({"file": safe_name, "ok": False, "error": "Percorso non consentito"})
+            continue
+
+        try:
+            upload.save(dest_path)
+            if target == "bin":
+                # Make the uploaded file executable (binaries and shared libraries)
+                current_mode = os.stat(dest_path).st_mode
+                os.chmod(dest_path, current_mode | 0o111)
+            results.append({"file": safe_name, "ok": True, "size": file_size})
+            log(f"Piper asset caricato: {safe_name} → {dest_dir}", "info")
+        except OSError as exc:
+            log(f"Piper asset upload error ({safe_name}): {exc}", "error")
+            results.append({"file": safe_name, "ok": False, "error": "Errore salvataggio"})
+
+    if not results:
+        return jsonify({"error": "Nessun file processato"}), 400
+
+    # Refresh PIPER_EXECUTABLE to point to the local binary if it now exists
+    if target == "bin":
+        with _piper_exe_lock:
+            if os.path.isfile(PIPER_LOCAL_BIN):
+                _cfg.PIPER_EXECUTABLE = PIPER_LOCAL_BIN
+
+    ok_count = sum(1 for r in results if r["ok"])
+    return jsonify({
+        "status": "ok" if ok_count > 0 else "error",
+        "results": results,
+        "uploaded": ok_count,
+        "total": len(results),
+        "voices": _list_voices(),
         "piper_available": _piper_available(),
     })
 

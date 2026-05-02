@@ -151,6 +151,75 @@
       </div>
     </div>
 
+    <!-- Piper full folder / asset upload card -->
+    <div class="card">
+      <h3>📁 Carica cartella Piper completa</h3>
+      <p class="hint">
+        Carica tutti i file Piper in una volta sola: eseguibili, librerie condivise, modelli vocali,
+        file di configurazione JSON e qualsiasi altro asset necessario.
+        Usa questa modalità per il provisioning <strong>completamente offline</strong> —
+        estrai l'archivio Piper sul tuo computer e carica tutti i file risultanti qui.
+      </p>
+
+      <div class="provision-section">
+        <div class="form-group">
+          <label>Directory di destinazione</label>
+          <select v-model="assetTargetDir" class="text-input">
+            <option value="bin">⚙️ Eseguibili / librerie (data/piper_bin/)</option>
+            <option value="voices">🎙️ Modelli vocali (data/piper_voices/)</option>
+          </select>
+          <p class="hint">
+            Scegli <strong>Eseguibili / librerie</strong> per file come
+            <code>piper</code>, <code>libonnxruntime.so</code> ecc.<br/>
+            Scegli <strong>Modelli vocali</strong> per file <code>.onnx</code> e <code>.onnx.json</code>.
+          </p>
+        </div>
+
+        <div class="form-group">
+          <label>Seleziona file (multipli supportati)</label>
+          <input
+            ref="assetFilesInputRef"
+            type="file"
+            multiple
+            class="file-input"
+            @change="onAssetFilesSelected"
+          />
+          <p v-if="assetFiles.length" class="hint">
+            {{ assetFiles.length }} file selezionat{{ assetFiles.length === 1 ? 'o' : 'i' }}:
+            {{ assetFiles.slice(0, 5).map(f => f.name).join(', ') }}{{ assetFiles.length > 5 ? ` … (+${assetFiles.length - 5} altri)` : '' }}
+          </p>
+          <p class="hint" style="color:#aaa;">
+            💡 Suggerimento: su Chrome/Edge puoi trascinare una cartella intera oppure
+            selezionare tutti i file con Ctrl+A nella finestra di dialogo.
+          </p>
+        </div>
+
+        <div class="form-actions">
+          <button
+            class="btn-upload"
+            @click="uploadPiperAssets"
+            :disabled="uploadingAssets || !assetFiles.length"
+          >
+            {{ uploadingAssets ? '⏳ Caricamento in corso...' : '📤 Carica asset Piper' }}
+          </button>
+        </div>
+
+        <div v-if="assetUploadResults.length" class="upload-results mt-small">
+          <div
+            v-for="r in assetUploadResults"
+            :key="r.file"
+            class="upload-result-item"
+            :class="r.ok ? 'result-ok' : 'result-err'"
+          >
+            {{ r.ok ? '✅' : '❌' }} {{ r.file }}{{ r.ok ? '' : ': ' + r.error }}
+          </div>
+          <p v-if="assetUploadSummary" class="hint" style="margin-top:6px;">
+            {{ assetUploadSummary }}
+          </p>
+        </div>
+      </div>
+    </div>
+
     <!-- OpenAI key card — interactive entry -->
     <div class="card">
       <h3>🔑 Chiave API OpenAI (TTS online)</h3>
@@ -461,6 +530,60 @@ async function uploadPiperFiles() {
     showError('Upload fallito — vedi dettagli sotto.')
   }
   await loadStatus()
+}
+
+// ── Piper full-asset / folder upload ──────────────────────────────────────
+const assetFilesInputRef = ref(null)
+const assetFiles = ref([])
+const assetTargetDir = ref('voices')
+const uploadingAssets = ref(false)
+const assetUploadResults = ref([])
+const assetUploadSummary = ref('')
+
+function onAssetFilesSelected(event) {
+  assetFiles.value = Array.from(event.target.files || [])
+  assetUploadResults.value = []
+  assetUploadSummary.value = ''
+}
+
+async function uploadPiperAssets() {
+  if (!assetFiles.value.length) return
+  uploadingAssets.value = true
+  assetUploadResults.value = []
+  assetUploadSummary.value = ''
+  clearFeedback()
+  try {
+    const api = getApi()
+    const formData = new FormData()
+    formData.append('target_dir', assetTargetDir.value)
+    for (const file of assetFiles.value) {
+      formData.append('files[]', file)
+    }
+    const { data } = await guardedCall(() => api.post('/tts/offline/upload-asset', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }))
+    assetUploadResults.value = data?.results ?? []
+    const ok = data?.uploaded ?? 0
+    const total = data?.total ?? assetFiles.value.length
+    if (ok === total) {
+      assetUploadSummary.value = `Tutti i ${total} file caricati con successo.`
+      showSuccess(`${ok} file caricati in data/piper_${assetTargetDir.value}/.`)
+    } else if (ok > 0) {
+      assetUploadSummary.value = `${ok} di ${total} file caricati. Vedi dettagli sopra.`
+      showSuccess(`${ok}/${total} file caricati.`)
+    } else {
+      assetUploadSummary.value = 'Nessun file caricato. Vedi dettagli sopra.'
+      showError('Upload non riuscito — vedi dettagli sopra.')
+    }
+    assetFiles.value = []
+    if (assetFilesInputRef.value) assetFilesInputRef.value.value = ''
+    await loadStatus()
+  } catch (e) {
+    const msg = extractApiError(e, 'Errore upload asset Piper')
+    showError(msg)
+  } finally {
+    uploadingAssets.value = false
+  }
 }
 
 // ── Piper binary upload ────────────────────────────────────────────────────

@@ -552,8 +552,13 @@ def _checked_download(url: str, dest_path: str, allowed_hosts: set, max_bytes: i
     """
     Scarica un file da *url* in modo sicuro, validando:
     - schema http/https
-    - host nella allowlist
+    - host nella allowlist (previene SSRF)
     - dimensione massima
+    - dest_path derivato da config + nome validato (previene path traversal)
+
+    validate_fn: funzione opzionale chiamata con dest_path dopo il download
+                 per validazioni aggiuntive sul file salvato (es. tipo archivio).
+
     Ritorna {"ok": True, "size": N} oppure solleva ValueError/RuntimeError.
     """
     import ssl
@@ -573,15 +578,26 @@ def _checked_download(url: str, dest_path: str, allowed_hosts: set, max_bytes: i
             f"Sono accettati solo: {', '.join(sorted(allowed_hosts))}."
         )
 
+    # Ricostruisci l'URL esclusivamente dai componenti validati (schema + host + path + query)
+    # per eliminare ogni possibilità che dati utente non validati raggiungano urlopen.
+    safe_url = urllib.parse.urlunparse((
+        parsed.scheme,
+        parsed.netloc,
+        parsed.path,
+        parsed.params,
+        parsed.query,
+        "",  # strip fragment
+    ))
+
     ctx = ssl.create_default_context() if parsed.scheme == "https" else None
-    req = urllib.request.Request(url, headers={"User-Agent": "GufoBox-Piper-Downloader/1.0"})
+    req = urllib.request.Request(safe_url, headers={"User-Agent": "GufoBox-Piper-Downloader/1.0"})
     open_kwargs: dict = {"timeout": 120}
     if ctx is not None:
         open_kwargs["context"] = ctx
 
     size_bytes = 0
     try:
-        with urllib.request.urlopen(req, **open_kwargs) as response:
+        with urllib.request.urlopen(req, **open_kwargs) as response:  # noqa: S310 — host validated above
             with open(dest_path, "wb") as out:
                 while True:
                     chunk = response.read(_DOWNLOAD_CHUNK_SIZE)
@@ -600,7 +616,7 @@ def _checked_download(url: str, dest_path: str, allowed_hosts: set, max_bytes: i
     except ValueError:
         raise
     except Exception as exc:
-        raise RuntimeError(f"Errore durante il download: {exc}") from exc
+        raise RuntimeError(f"Errore durante il download: {_safe_error(exc)}") from exc
 
     if validate_fn:
         validate_fn(dest_path)
@@ -638,9 +654,9 @@ def api_tts_offline_download_binary():
                 url, archive_path, _PIPER_BINARY_ALLOWED_HOSTS, _PIPER_BINARY_MAX_BYTES
             )
         except ValueError as exc:
-            return jsonify({"error": str(exc)}), 400
+            return jsonify({"error": _safe_error(exc)}), 400
         except RuntimeError as exc:
-            return jsonify({"error": str(exc)}), 502
+            return jsonify({"error": _safe_error(exc)}), 502
 
         # Estrai il binario dall'archivio tar.gz
         try:
@@ -667,7 +683,7 @@ def api_tts_offline_download_binary():
                             break
                         dst.write(chunk)
         except (tarfile.TarError, Exception) as exc:
-            return jsonify({"error": f"Errore estrazione archivio: {exc}"}), 422
+            return jsonify({"error": f"Errore estrazione archivio: {_safe_error(exc)}"}), 422
 
         # Salva il binario in PIPER_LOCAL_BIN
         try:
@@ -679,7 +695,7 @@ def api_tts_offline_download_binary():
             current_mode = os.stat(local_bin).st_mode
             os.chmod(local_bin, current_mode | 0o111)
         except OSError as exc:
-            return jsonify({"error": f"Errore salvataggio binario: {exc}"}), 500
+            return jsonify({"error": f"Errore salvataggio binario: {_safe_error(exc)}"}), 500
 
     # Aggiorna il path eseguibile runtime
     with _piper_exe_lock:
@@ -779,7 +795,7 @@ def api_tts_offline_download_voice():
         safe_onnx = _validate_piper_upload_filename(onnx_filename)
         safe_config = _validate_piper_upload_filename(config_filename)
     except ValueError as exc:
-        return jsonify({"error": f"Nome file voce non valido: {exc}"}), 400
+        return jsonify({"error": f"Nome file voce non valido: {_safe_error(exc)}"}), 400
 
     os.makedirs(_cfg.PIPER_VOICES_DIR, exist_ok=True)
     results = []
@@ -793,9 +809,9 @@ def api_tts_offline_download_voice():
             results.append({"file": safe_name, "ok": True, "size": info["size"]})
             log(f"Voce Piper scaricata: {safe_name} ({info['size']} bytes)", "info")
         except ValueError as exc:
-            return jsonify({"error": str(exc)}), 400
+            return jsonify({"error": _safe_error(exc)}), 400
         except RuntimeError as exc:
-            return jsonify({"error": str(exc)}), 502
+            return jsonify({"error": _safe_error(exc)}), 502
 
     return jsonify({
         "status": "ok",

@@ -43,6 +43,16 @@ def action_play_pause():
     log("Pulsante FISICO: Play/Pausa", "info")
     if _DIRECT_AVAILABLE:
         try:
+            # Se una registrazione statuina è in corso → fermala
+            try:
+                from core.voice_recorder import is_statuina_recording, stop_statuina_recording
+                if is_statuina_recording():
+                    log("Pulsante FISICO: Play/Pausa → stop registrazione statuina", "info")
+                    stop_statuina_recording()
+                    return
+            except Exception as _ve:
+                log(f"Controllo registrazione statuina fallito: {_ve}", "warning")
+
             # Se sveglia attiva → snooze 5 minuti
             from core.hardware import get_standby_state
             if get_standby_state() == "alarm_active":

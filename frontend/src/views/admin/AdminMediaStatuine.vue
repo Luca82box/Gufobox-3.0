@@ -59,6 +59,7 @@
               <optgroup label="🎙️ Voce">
                 <option value="voice_recording">🎙️ Riproduci Registrazione</option>
                 <option value="record_voice">🎤 Registro Voce (registra il bambino)</option>
+                <option value="statuina_record">🎙️ Registra Voce (guidata offline)</option>
               </optgroup>
             </select>
           </div>
@@ -298,6 +299,27 @@
           </p>
           <p class="mode-hint" style="color:#ffd27b">
             💡 Nessuna configurazione aggiuntiva richiesta. La registrazione parte automaticamente al tocco della statuina.
+          </p>
+        </div>
+
+        <!-- STATUINA RECORD — guided offline recording mode -->
+        <div v-if="form.mode === 'statuina_record'" class="mode-section">
+          <h4>🎙️ Registra Voce (guidata offline)</h4>
+          <p class="mode-hint">
+            Quando il bambino avvicina questa statuina, il gufetto parla <strong>anche senza internet</strong>:
+          </p>
+          <ol class="mode-steps">
+            <li>Il gufetto dice: <em>"Ciao amico mio, registra ora la tua voce."</em></li>
+            <li>Riproduce il <strong>verso del gufo</strong>.</li>
+            <li>Inizia la <strong>registrazione dal microfono</strong>.</li>
+            <li>La registrazione si ferma quando si preme <strong>play/pausa</strong> oppure dopo <strong>5 minuti</strong>.</li>
+            <li>Il gufetto conferma: <em>"Bene amico mio, ora la registrazione viene salvata…"</em></li>
+          </ol>
+          <p class="mode-hint">
+            Il file viene salvato in <code>media/registrazioni/</code> come <strong>MP3 192 kbps / 44,1 kHz</strong>.
+          </p>
+          <p class="mode-hint" style="color:#ffd27b">
+            💡 Richiede <strong>Piper TTS</strong> configurato (per i messaggi vocali), <strong>arecord</strong> e <strong>ffmpeg</strong> installati sul Raspberry Pi.
           </p>
         </div>
 
@@ -760,7 +782,7 @@ function modeIcon(m) {
     adventure: '🗺️', spoken_quiz: '🎤', karaoke: '🎵', guess_sound: '🔊',
     personalized_story: '📖', bedtime: '🌙', imitate: '🎭',
     playful_english: '🇬🇧', logic_games: '🧩',
-    voice_recording: '🎙️', record_voice: '🎤',
+    voice_recording: '🎙️', record_voice: '🎤', statuina_record: '🎙️',
   }
   return icons[m] || '🏷️'
 }
@@ -773,6 +795,7 @@ function modeLabel(m) {
     bedtime: 'Buonanotte / Rilassamento', imitate: 'Modalità Imita',
     playful_english: 'Inglese Giocoso', logic_games: 'Giochi Logici Semplici',
     voice_recording: 'Riproduci Registrazione', record_voice: 'Registro Voce',
+    statuina_record: 'Registra Voce (guidata offline)',
   }
   return labels[m] || m
 }
@@ -791,6 +814,7 @@ function profileTarget(p) {
   if (p.mode === 'karaoke' || p.mode === 'bedtime') return p.folder || ''
   if (p.mode === 'voice_recording') return p.recording_path || ''
   if (p.mode === 'record_voice') return 'Registra voce bambino'
+  if (p.mode === 'statuina_record') return 'Registrazione guidata offline (MP3 192 kbps)'
   if (EXPERIENCE_AI_MODES.has(p.mode) && p.activity_config) {
     const ac = p.activity_config
     const parts = [AGE_LABELS[ac.age_group] || ac.age_group]
@@ -866,6 +890,8 @@ onBeforeUnmount(() => {
 .mode-section { background: #1e1e26; border: 1px solid #3a3a48; border-radius: 8px; padding: 15px; margin-bottom: 15px; }
 .mode-section h4 { margin: 0 0 12px; color: #ffd27b; }
 .mode-hint { font-size: .85rem; color: #aaa; margin: -4px 0 12px; font-style: italic; }
+.mode-steps { font-size: .85rem; color: #ccc; margin: 4px 0 12px; padding-left: 18px; }
+.mode-steps li { margin-bottom: 6px; }
 
 /* Selected path display */
 .selected-path-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
@@ -984,6 +1010,7 @@ onBeforeUnmount(() => {
 .mode-badge.logic_games { background: #4e342e; }
 .mode-badge.voice_recording { background: #4a235a; }
 .mode-badge.record_voice { background: #1b3a5a; }
+.mode-badge.statuina_record { background: #1b4a3a; }
 .target-path { margin: 4px 0 0; font-size: .8rem; color: #aaa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .led-badge { margin: 4px 0 0; font-size: .8rem; color: #ffd27b; display: flex; align-items: center; gap: 5px; }
 .color-dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; border: 1px solid #555; }

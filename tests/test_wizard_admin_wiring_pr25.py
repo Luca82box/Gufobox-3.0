@@ -119,6 +119,13 @@ def reset_state():
     yield
 
 
+@pytest.fixture(autouse=True)
+def mock_openai_available():
+    """Patch has_openai to return True so RFID trigger tests work without a real API key."""
+    with patch("api.rfid.has_openai", return_value=True):
+        yield
+
+
 # ---------------------------------------------------------------------------
 # 1–2. Wizard proposes activities configured via admin
 # ---------------------------------------------------------------------------

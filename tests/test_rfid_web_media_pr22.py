@@ -79,6 +79,13 @@ def reset_state():
     rss_runtime.clear()
 
 
+@pytest.fixture(autouse=True)
+def mock_internet_available():
+    """Patch has_internet to return True so trigger tests work without real internet."""
+    with patch("api.rfid.has_internet", return_value=True):
+        yield
+
+
 def _make_web_media_profile(rfid_code="WM:00:11:22", url="https://stream.example.com/radio.mp3",
                              content_type="radio", name="Test Radio"):
     return {

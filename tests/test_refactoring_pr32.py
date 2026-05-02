@@ -80,7 +80,7 @@ class TestButtonsNoDependencyOnHTTP:
             btns._send_mpv_command = orig_fn
 
     def test_power_hold_uses_direct_standby(self):
-        """action_power_hold deve chiamare _perform_standby direttamente quando disponibile."""
+        """action_power_hold è un no-op: lo standby avviene solo da pannello admin."""
         import hw.buttons as btns
         orig_avail = btns._DIRECT_AVAILABLE
         orig_fn = btns._perform_standby
@@ -89,7 +89,7 @@ class TestButtonsNoDependencyOnHTTP:
             mock_fn = MagicMock()
             btns._perform_standby = mock_fn
             btns.action_power_hold()
-            mock_fn.assert_called_once()
+            mock_fn.assert_not_called()
         finally:
             btns._DIRECT_AVAILABLE = orig_avail
             btns._perform_standby = orig_fn

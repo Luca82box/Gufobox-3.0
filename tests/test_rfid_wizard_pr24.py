@@ -119,6 +119,13 @@ def reset_state():
     })
 
 
+@pytest.fixture(autouse=True)
+def mock_openai_available():
+    """Patch has_openai to return True so trigger tests work without a real API key."""
+    with patch("api.rfid.has_openai", return_value=True):
+        yield
+
+
 @pytest.fixture()
 def tmp_files(tmp_path):
     rfid_f = str(tmp_path / "rfid_profiles.json")

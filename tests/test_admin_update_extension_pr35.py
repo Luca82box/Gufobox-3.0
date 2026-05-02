@@ -235,16 +235,17 @@ class TestOtaStartNewModes:
 
         valid_modes = ("app", "system_safe", "drivers", "system_firmware")
         for mode in valid_modes:
-            # Ensure lock is free
-            try:
+            # Ensure lock is free before each iteration
+            if not sys_mod._ota_lock.acquire(blocking=False):
+                pass  # already free
+            else:
                 sys_mod._ota_lock.release()
-            except RuntimeError:
-                pass
 
             with patch("api.system.eventlet") as mock_ev, \
                  patch("api.system.bus"), \
                  patch("api.system._run_ota"):
-                mock_ev.spawn_n = lambda fn: None
+                # spawn_n should call the worker (which releases the lock)
+                mock_ev.spawn_n = lambda fn: fn()
                 resp = client.post(
                     "/api/system/ota/start",
                     json={"mode": mode},

@@ -988,36 +988,45 @@ def api_ota_apply_uploaded():
 # Allowed URL schemes for OTA fetch
 _OTA_FETCH_ALLOWED_SCHEMES = {"http", "https"}
 
-# Private/internal IP ranges that must not be reachable via OTA fetch (SSRF prevention)
-_OTA_FETCH_BLOCKED_NETS = [
-    # loopback
-    ("127.", ),
-    # link-local
-    ("169.254.", ),
-    # RFC1918 private
-    ("10.", ),
-    # Class B private 172.16.0.0/12
-    tuple(f"172.{i}." for i in range(16, 32)),
-    # Class C private
-    ("192.168.", ),
-    # IPv6 loopback / link-local
-    ("::1", "fe80:", "fc", "fd"),
-]
+# Pre-computed flat list of private/internal IP prefixes (SSRF prevention)
+_OTA_BLOCKED_PREFIXES = (
+    # loopback IPv4
+    "127.",
+    # link-local IPv4
+    "169.254.",
+    # RFC1918 class A
+    "10.",
+    # RFC1918 class C
+    "192.168.",
+    # IPv6 loopback / ULA / link-local
+    "::1",
+    "fe80:",
+    "fc",
+    "fd",
+) + tuple(f"172.{i}." for i in range(16, 32))  # RFC1918 class B 172.16.0.0/12
+
 
 def _is_blocked_host(hostname: str) -> bool:
-    """Return True if the host resolves to a private/internal IP (SSRF guard)."""
+    """
+    Return True if the host resolves to a private/internal address (SSRF guard).
+
+    Checks both IPv4 and IPv6 addresses returned by getaddrinfo so that
+    IPv6 literal addresses or dual-stack hosts are covered.
+    """
     import socket
-    blocked_prefixes = []
-    for group in _OTA_FETCH_BLOCKED_NETS:
-        blocked_prefixes.extend(group)
-    # Block localhost by name as well
     if hostname.lower() in ("localhost", "localhost.localdomain"):
         return True
     try:
-        addr = socket.gethostbyname(hostname)
-        return any(addr.startswith(prefix) for prefix in blocked_prefixes)
+        # getaddrinfo returns (family, type, proto, canonname, sockaddr)
+        results = socket.getaddrinfo(hostname, None)
+        for _, _, _, _, sockaddr in results:
+            # sockaddr[0] is the IP address string for both AF_INET and AF_INET6
+            addr = sockaddr[0].lower()
+            if any(addr.startswith(prefix) for prefix in _OTA_BLOCKED_PREFIXES):
+                return True
+        return False
     except socket.gaierror:
-        # Cannot resolve — treat as blocked to be safe
+        log(f"OTA fetch_url: impossibile risolvere hostname '{hostname}' — bloccato per sicurezza", "warning")
         return True
 
 

@@ -804,4 +804,23 @@ onUnmounted(() => {
 .preview-body { display: flex; justify-content: center; }
 .preview-media { max-width: 100%; max-height: 65vh; border-radius: 8px; }
 .loading { padding: 20px; color: #aaa; }
+
+/* ── Responsive: portrait / small screens ── */
+@media (max-width: 600px) {
+  .file-list-header,
+  .file-item {
+    grid-template-columns: 36px 1fr 80px;
+  }
+
+  /* Hide non-essential columns on small portrait screens */
+  .col-type, .entry-type,
+  .col-size, .entry-size,
+  .col-date, .entry-date {
+    display: none;
+  }
+
+  /* Ensure name always has room */
+  .entry-info { min-width: 0; }
+  .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+}
 </style>

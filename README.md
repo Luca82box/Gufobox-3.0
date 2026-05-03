@@ -15,7 +15,59 @@ Smart speaker educativo per bambini basato su Raspberry Pi.
 
 ---
 
-## Installazione Backend
+## Installazione su Raspberry Pi (installazione rapida)
+
+Per una installazione completa su Raspberry Pi OS, usa lo script automatico:
+
+```bash
+# Clona il repository
+git clone https://github.com/Luca82box/Gufobox-3.0.git
+cd Gufobox-3.0
+
+# Esegui lo script di installazione (richiede sudo)
+sudo bash scripts/install-raspberry.sh
+```
+
+Lo script installa automaticamente:
+- Pacchetti di sistema (ffmpeg, mpv, nodejs, gpio, i2c, spidev, ...)
+- Virtualenv Python e tutte le dipendenze (`requirements.txt` + `requirements-hw.txt`)
+- Build del frontend Vue
+- Servizio systemd `gufobox` (abilitato all'avvio)
+
+Dopo l'installazione:
+```bash
+# Lo script crea automaticamente .env da .env.example.
+# DEVI configurare i valori segnaposto prima di avviare GufoBox:
+nano .env
+# Imposta almeno:
+#   OPENAI_API_KEY=sk-...        (necessaria per Story Studio e chat AI)
+#   GUFOBOX_SECRET_KEY=...       (chiave segreta Flask — cambia il valore di default!)
+
+# Avvia il servizio
+sudo systemctl start gufobox
+sudo systemctl status gufobox
+
+# Controlla i log
+journalctl -u gufobox -f
+```
+
+Accedi all'interfaccia su: `http://gufobox.local:5000` (o `http://<IP>:5000`)
+
+### Opzioni avanzate dello script
+
+```bash
+sudo bash scripts/install-raspberry.sh --help
+
+# Salta l'installazione apt (utile per aggiornamenti veloci del solo codice):
+sudo bash scripts/install-raspberry.sh --skip-apt
+
+# Non creare il servizio systemd:
+sudo bash scripts/install-raspberry.sh --skip-service
+```
+
+---
+
+## Installazione manuale (sviluppo / passo passo)
 
 ```bash
 # 1. Clona il repository
@@ -83,7 +135,66 @@ Vedi `.env.example` per la lista completa.
 
 ---
 
-## Note Raspberry Pi / Permessi Hardware
+## Risoluzione problemi (Troubleshooting)
+
+### Story Studio: "Errore durante la generazione"
+
+Se Story Studio mostra un errore durante la generazione della storia:
+
+1. **Chiave API OpenAI non configurata** — il messaggio tipico è
+   *"Client OpenAI non inizializzato"* o *"Errore di autenticazione OpenAI"*.
+   - Vai su **Pannello Admin → Impostazioni AI** e inserisci la tua `OPENAI_API_KEY`.
+   - In alternativa, aggiungila al file `.env`: `OPENAI_API_KEY=sk-...`
+   - Riavvia il servizio: `sudo systemctl restart gufobox`
+
+2. **Quota OpenAI esaurita o rate limit** — riprova tra qualche minuto o verifica
+   il tuo piano su [platform.openai.com](https://platform.openai.com).
+
+3. Per ulteriori dettagli tecnici, controlla i log del server:
+   ```bash
+   journalctl -u gufobox -n 50 --no-pager
+   ```
+
+### Voce offline Piper non funziona
+
+Piper richiede il **binario eseguibile** e le **librerie condivise** (`libonnxruntime.so.*`,
+`libpiper_phonemize.so.*`) presenti nella stessa directory.
+
+**Installazione automatica (consigliata su RPi con internet):**
+1. Pannello Admin → Voce offline → clic su **Scarica binario automaticamente**
+
+**Installazione manuale (senza internet):**
+1. Scarica `piper_linux_aarch64.tar.gz` da
+   [github.com/rhasspy/piper/releases](https://github.com/rhasspy/piper/releases)
+   su un altro PC
+2. Estrai tutto il contenuto dell'archivio
+3. Carica tutti i file estratti (binario `piper`, `.so.*`, cartella `espeak-ng-data/`)
+   tramite Pannello Admin → Voce offline → **Carica file Piper** (target: `bin`)
+4. Carica i file voce `.onnx` e `.onnx.json` (target: `voices`)
+
+**Diagnostica:**
+- `GET /api/tts/offline/status` — mostra `piper_available` e un campo `diagnosi`
+  con suggerimenti specifici in caso di errore
+- Verifica che il binario sia ARM64: `file data/piper_bin/piper`
+
+### GPIO / pulsanti non funzionano
+
+Se vedi `Unable to load any default pin factory!` nei log:
+```bash
+# Installa lgpio (il driver preferito su Raspberry Pi OS bookworm)
+sudo apt install -y python3-lgpio
+pip install lgpio
+```
+
+Se usi il virtualenv del progetto:
+```bash
+source venv/bin/activate
+pip install lgpio RPi.GPIO
+```
+
+---
+
+
 
 Alcune funzioni richiedono hardware fisico e permessi specifici:
 

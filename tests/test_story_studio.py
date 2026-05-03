@@ -342,10 +342,67 @@ class TestStoryEngine:
         with patch("core.story_engine.STORY_STUDIO_STORIES_DIR", str(tmp_path)):
             assert delete_story("00000000-0000-0000-0000-000000000000") is False
 
+    # ------------------------------------------------------------------
+    # Tests for _friendly_error_message
+    # ------------------------------------------------------------------
+    def test_friendly_error_none_type(self):
+        from core.story_engine import _friendly_error_message
+        msg = _friendly_error_message(AttributeError("'NoneType' object has no attribute 'chat'"))
+        assert "OpenAI" in msg or "API" in msg
 
-# ===========================================================================
-# API Endpoints
-# ===========================================================================
+    def test_friendly_error_not_initialized(self):
+        from core.story_engine import _friendly_error_message
+        msg = _friendly_error_message(RuntimeError("Client OpenAI non inizializzato"))
+        assert "API" in msg or "non inizializzato" in msg.lower() or "OpenAI" in msg
+
+    def test_friendly_error_auth_401(self):
+        from core.story_engine import _friendly_error_message
+        msg = _friendly_error_message(Exception("401 Unauthorized openai"))
+        assert "autenticazione" in msg.lower() or "openai" in msg.lower()
+
+    def test_friendly_error_quota(self):
+        from core.story_engine import _friendly_error_message
+        msg = _friendly_error_message(Exception("quota exceeded 429"))
+        assert "quota" in msg.lower() or "riprova" in msg.lower()
+
+    def test_friendly_error_generic(self):
+        from core.story_engine import _friendly_error_message
+        msg = _friendly_error_message(Exception("some unexpected internal error xyz"))
+        # Must not expose raw exception details; returns a generic Italian message
+        assert "xyz" not in msg
+        assert len(msg) > 10
+
+    # ------------------------------------------------------------------
+    # Test that run_story_pipeline raises/reports error when client is None
+    # ------------------------------------------------------------------
+    def test_pipeline_none_client_emits_error(self, tmp_path):
+        """When get_openai_client() returns None, pipeline emits a clean error."""
+        import uuid
+        from core.story_engine import run_story_pipeline
+
+        story_id = str(uuid.uuid4())
+        params = {
+            "title": "Test", "prompt": "test", "age_group": "bambino",
+            "duration": "short", "narrator_voice": "nova",
+        }
+        emitted = []
+
+        with patch("core.story_engine.STORY_STUDIO_STORIES_DIR", str(tmp_path)), \
+             patch("api.ai.get_openai_client", return_value=None), \
+             patch("core.extensions.socketio") as mock_sio:
+            mock_sio.emit.side_effect = lambda event, data: emitted.append(data)
+            run_story_pipeline(story_id, params)
+
+        error_events = [e for e in emitted if e.get("phase") == "error"]
+        assert len(error_events) >= 1
+        msg = error_events[0]["message"]
+        # Must NOT expose raw Python exception text to the UI
+        assert "NoneType" not in msg
+        assert "AttributeError" not in msg
+        # Must contain a user-friendly hint
+        assert len(msg) > 10
+
+
 
 @pytest.fixture
 def app():

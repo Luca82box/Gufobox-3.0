@@ -322,16 +322,38 @@ def api_tts_offline_status():
     """Piper status: installed, available voices, cache stats."""
     with _piper_exe_lock:
         exe = _cfg.PIPER_EXECUTABLE
-    return jsonify({
-        "piper_available": _piper_available(),
+    local_bin_exists = os.path.isfile(PIPER_LOCAL_BIN)
+    available = _piper_available()
+
+    # Build a user-facing diagnostic hint when piper is present but not usable
+    diagnosi = None
+    if local_bin_exists and not available:
+        diagnosi = (
+            "Il binario piper è presente ma non risponde. "
+            "Possibili cause: architettura sbagliata (serve ARM64 per RPi 4/5), "
+            "librerie condivise mancanti (reinstalla tramite 'Scarica binario automaticamente'), "
+            "oppure il file non è eseguibile."
+        )
+    elif not local_bin_exists and exe == "piper":
+        diagnosi = (
+            "Piper non è installato. Usa il pulsante 'Scarica binario automaticamente' "
+            "nel pannello Voce offline oppure carica manualmente il file 'piper' e le "
+            "librerie condivise estratte dall'archivio piper_linux_aarch64.tar.gz."
+        )
+
+    result = {
+        "piper_available": available,
         "piper_executable": exe,
         "piper_local_bin": PIPER_LOCAL_BIN,
-        "piper_local_bin_exists": os.path.isfile(PIPER_LOCAL_BIN),
+        "piper_local_bin_exists": local_bin_exists,
         "voices_dir": PIPER_VOICES_DIR,
         "voices": _list_voices(),
         "cache": _piper_cache_stats(),
         "settings": piper_settings,
-    })
+    }
+    if diagnosi:
+        result["diagnosi"] = diagnosi
+    return jsonify(result)
 
 
 @tts_bp.route("/tts/offline/voices", methods=["GET"])
@@ -753,8 +775,10 @@ def api_tts_offline_download_binary():
       {"url": "https://github.com/rhasspy/piper/releases/download/.../piper_linux_aarch64.tar.gz"}
 
     Se ``url`` è omesso viene usato l'URL predefinito per Raspberry Pi (aarch64).
-    Il binario viene estratto dall'archivio tar.gz e salvato in ``data/piper_bin/piper``.
+    L'intero contenuto dell'archivio tar.gz (binario, librerie condivise, dati espeak-ng)
+    viene estratto in ``data/piper_bin/`` in modo che piper possa trovare le sue dipendenze.
     """
+    import shutil as _shutil
     import tarfile
     import tempfile
 
@@ -781,14 +805,22 @@ def api_tts_offline_download_binary():
         except RuntimeError:
             return jsonify({"error": "Errore durante il download. Controlla i log del server."}), 502
 
-        # Estrai il binario dall'archivio tar.gz
+        # Estrai l'intero archivio tar.gz in modo sicuro.
+        # Piper richiede non solo il binario ma anche le librerie condivise
+        # (libonnxruntime.so.*, libpiper_phonemize.so.*) e la directory espeak-ng-data.
+        # Tutti i file vengono estratti in PIPER_LOCAL_BIN_DIR, rimuovendo il
+        # primo livello di directory dell'archivio (es. "piper/piper" -> "piper_bin/piper").
         try:
+            local_bin_dir = _cfg.PIPER_LOCAL_BIN_DIR
+            local_bin = _cfg.PIPER_LOCAL_BIN
+            os.makedirs(local_bin_dir, exist_ok=True)
+            real_bin_dir = os.path.realpath(local_bin_dir)
+
             with tarfile.open(archive_path, "r:gz") as tf:
-                # Cerca il file eseguibile 'piper' o 'piper/piper' nell'archivio
+                # Prima verifica che esista un membro 'piper' (il binario principale)
                 piper_member = None
                 for m in tf.getmembers():
                     name = m.name.lstrip("./")
-                    # Accetta: "piper", "piper/piper", "piper_linux_aarch64/piper", ecc.
                     if (name == "piper" or name.endswith("/piper")) and m.isfile():
                         piper_member = m
                         break
@@ -797,40 +829,76 @@ def api_tts_offline_download_binary():
                         "error": "Binario 'piper' non trovato nell'archivio tar.gz."
                     }), 422
 
-                # Estrai in una posizione temporanea sicura
-                extracted_path = os.path.join(tmpdir, "piper_extracted")
-                with tf.extractfile(piper_member) as src, open(extracted_path, "wb") as dst:
-                    while True:
-                        chunk = src.read(_DOWNLOAD_CHUNK_SIZE)
-                        if not chunk:
-                            break
-                        dst.write(chunk)
-        except (tarfile.TarError, Exception) as exc:
+                # Determina il prefisso da rimuovere (es. "piper/" o "piper_linux_aarch64/")
+                piper_bin_path = piper_member.name.lstrip("./")
+                if "/" in piper_bin_path:
+                    strip_prefix = piper_bin_path.rsplit("/", 1)[0] + "/"
+                else:
+                    strip_prefix = ""
+
+                extracted_count = 0
+                for m in tf.getmembers():
+                    # Salta symlink e device per sicurezza
+                    if not (m.isfile() or m.isdir()):
+                        continue
+                    rel_name = m.name.lstrip("./")
+                    if strip_prefix and rel_name.startswith(strip_prefix):
+                        rel_name = rel_name[len(strip_prefix):]
+                    if not rel_name:
+                        continue
+
+                    # Previeni path traversal: dest_path deve essere contenuto in real_bin_dir.
+                    # commonpath() solleva ValueError se i percorsi sono su volumi diversi (Windows);
+                    # in quel caso _safe è False e il file viene ignorato correttamente.
+                    dest_path = os.path.realpath(os.path.join(local_bin_dir, rel_name))
+                    try:
+                        _safe = (os.path.commonpath([real_bin_dir, dest_path]) == real_bin_dir)
+                    except ValueError:
+                        _safe = False
+                    if not _safe:
+                        log(f"Piper archive: percorso non sicuro ignorato: {m.name!r}", "warning")
+                        continue
+
+                    if m.isdir():
+                        os.makedirs(dest_path, exist_ok=True)
+                        continue
+
+                    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                    with tf.extractfile(m) as src, open(dest_path, "wb") as dst:
+                        while True:
+                            chunk = src.read(_DOWNLOAD_CHUNK_SIZE)
+                            if not chunk:
+                                break
+                            dst.write(chunk)
+                    extracted_count += 1
+
+            # Rendi eseguibili il binario principale e le librerie condivise
+            if os.path.isfile(local_bin):
+                current_mode = os.stat(local_bin).st_mode
+                os.chmod(local_bin, current_mode | 0o111)
+            for entry in os.listdir(local_bin_dir):
+                entry_path = os.path.join(local_bin_dir, entry)
+                if os.path.isfile(entry_path) and (entry.endswith(".so") or ".so." in entry):
+                    current_mode = os.stat(entry_path).st_mode
+                    os.chmod(entry_path, current_mode | 0o555)
+
+            log(f"Estratti {extracted_count} file da archivio Piper in {local_bin_dir}", "info")
+
+        except (tarfile.TarError, OSError, Exception) as exc:
             log(f"Piper binary archive extraction error: {exc}", "error")
             return jsonify({"error": "Errore durante l'estrazione dell'archivio tar.gz."}), 422
-
-        # Salva il binario in PIPER_LOCAL_BIN
-        try:
-            local_bin_dir = _cfg.PIPER_LOCAL_BIN_DIR
-            local_bin = _cfg.PIPER_LOCAL_BIN
-            os.makedirs(local_bin_dir, exist_ok=True)
-            import shutil
-            shutil.copy2(extracted_path, local_bin)
-            current_mode = os.stat(local_bin).st_mode
-            os.chmod(local_bin, current_mode | 0o111)
-        except OSError as exc:
-            log(f"Piper binary save error: {exc}", "error")
-            return jsonify({"error": "Errore durante il salvataggio del binario."}), 500
 
     # Aggiorna il path eseguibile runtime
     with _piper_exe_lock:
         _cfg.PIPER_EXECUTABLE = _cfg.PIPER_LOCAL_BIN
 
-    log(f"Binario Piper installato automaticamente: {_cfg.PIPER_LOCAL_BIN}", "info")
+    available = _piper_available()
+    log(f"Binario Piper installato automaticamente: {_cfg.PIPER_LOCAL_BIN} "
+        f"(disponibile: {available})", "info")
     return jsonify({
         "status": "ok",
         "piper_executable": _cfg.PIPER_LOCAL_BIN,
-        "piper_available": _piper_available(),
+        "piper_available": available,
         "url": url,
     })
 

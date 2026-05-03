@@ -614,7 +614,7 @@ class TestStoryStudioApi:
 
     def test_generate_valid_model_accepted(self, client):
         """Valid model name is accepted and passed through."""
-        with patch("core.story_engine.start_generation", return_value="test-uuid-aaaa-bbbb-ccccddddeeee"):
+        with patch("core.story_engine.start_generation", return_value="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"):
             r = client.post("/api/story-studio/generate",
                             json={"title": "Test", "prompt": "Una storia", "model": "gpt-4o-mini"},
                             content_type="application/json")
@@ -622,7 +622,7 @@ class TestStoryStudioApi:
 
     def test_generate_null_model_accepted(self, client):
         """Omitting model (None) falls back to default and is accepted."""
-        with patch("core.story_engine.start_generation", return_value="test-uuid-1111-2222-333344445555"):
+        with patch("core.story_engine.start_generation", return_value="11111111-2222-3333-4444-555555555555"):
             r = client.post("/api/story-studio/generate",
                             json={"title": "Test", "prompt": "Una storia"},
                             content_type="application/json")

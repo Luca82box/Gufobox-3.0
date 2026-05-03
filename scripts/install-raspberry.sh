@@ -99,9 +99,12 @@ _install_manifest() {
     fi
     local required_pkgs=() optional_pkgs=()
     while IFS= read -r line || [[ -n "${line}" ]]; do
-        # Strip commenti e spazi
+        # Strip commenti e spazi (leading/trailing) con espansione di parametri bash
         line="${line%%#*}"
-        line="$(echo "${line}" | xargs 2>/dev/null || echo "")"
+        # Trim leading whitespace
+        line="${line#"${line%%[! $'\t']*}"}"
+        # Trim trailing whitespace
+        line="${line%"${line##*[! $'\t']}"}"
         [[ -z "${line}" ]] && continue
         if [[ "${line: -1}" == "?" ]]; then
             optional_pkgs+=("${line%?}")

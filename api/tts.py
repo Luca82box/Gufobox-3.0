@@ -120,17 +120,29 @@ def _validate_piper_voice_complete(voice: str) -> dict:
     for *voice*.  Returns a dict:
       {"ok": True}  — both files exist
       {"ok": False, "missing": [...], "message": "<Italian diagnostic>"}
+
+    Paths are derived from the filesystem scan (not from user input directly),
+    so path injection is not possible.
     """
     _validate_voice_name(voice)
-    voices_dir  = _cfg.PIPER_VOICES_DIR
-    onnx_path   = os.path.join(voices_dir, f"{voice}.onnx")
-    config_path = os.path.join(voices_dir, f"{voice}.onnx.json")
+    voices_dir = _cfg.PIPER_VOICES_DIR
+
+    # Scan the filesystem and find the exact disk names matching this voice.
+    # Paths are derived from os.listdir() entries, not from the user-supplied value.
+    try:
+        entries = set(os.listdir(voices_dir))
+    except OSError:
+        entries = set()
+
+    # Expected filenames for a complete voice
+    expected_onnx      = f"{voice}.onnx"
+    expected_onnx_json = f"{voice}.onnx.json"
 
     missing = []
-    if not os.path.isfile(onnx_path):
-        missing.append(f"{voice}.onnx")
-    if not os.path.isfile(config_path):
-        missing.append(f"{voice}.onnx.json")
+    if expected_onnx not in entries:
+        missing.append(expected_onnx)
+    if expected_onnx_json not in entries:
+        missing.append(expected_onnx_json)
 
     if missing:
         files_str = " e ".join(missing)
@@ -464,8 +476,9 @@ def api_tts_offline_test():
             check = _validate_piper_voice_complete(voice)
             if not check["ok"]:
                 return jsonify({"error": check["message"]}), 422
-        except ValueError as exc:
-            return jsonify({"error": str(exc)}), 400
+        except ValueError:
+            log(f"Piper test: nome voce non valido: {voice!r}", "warning")
+            return jsonify({"error": "Nome voce non valido"}), 400
 
     try:
         wav_path = synthesize_with_piper(text, voice=voice)

@@ -365,7 +365,6 @@ async function loadModels() {
       const def = data.find(m => m.default)
       if (def) {
         defaultModelId.value = def.id
-        if (!form.value.model) form.value.model = null // keep null so backend uses default
       }
     }
   } catch (_) {}

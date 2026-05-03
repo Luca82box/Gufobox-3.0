@@ -101,7 +101,7 @@ _install_manifest() {
     while IFS= read -r line || [[ -n "${line}" ]]; do
         # Strip commenti e spazi
         line="${line%%#*}"
-        line="${line// /}"
+        line="$(echo "${line}" | xargs 2>/dev/null || echo "")"
         [[ -z "${line}" ]] && continue
         if [[ "${line: -1}" == "?" ]]; then
             optional_pkgs+=("${line%?}")

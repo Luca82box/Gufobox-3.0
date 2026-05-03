@@ -59,6 +59,32 @@ _UUID_RE = re.compile(
 
 ESTIMATED_WPM = 150  # Parole al minuto stimate per il calcolo della durata
 
+# Default model used for script generation
+STORY_SCRIPT_MODEL = "gpt-4o"
+
+
+def _friendly_error_message(exc: Exception) -> str:
+    """Return a short, user-facing Italian error message for story pipeline failures.
+
+    The original exception is logged server-side; here we only expose what is
+    safe and actionable to the end user.
+    """
+    msg = str(exc)
+    if "openai" in msg.lower() or "api_key" in msg.lower() or "unauthorized" in msg.lower() \
+            or "401" in msg or "authentication" in msg.lower():
+        return ("Errore di autenticazione OpenAI. "
+                "Verifica la chiave API nel pannello Impostazioni AI.")
+    if "NoneType" in msg or "not initialized" in msg.lower() or "non inizializzato" in msg.lower():
+        return ("Servizio AI non disponibile. "
+                "Verifica che la chiave API OpenAI sia configurata nel pannello Impostazioni AI.")
+    if "quota" in msg.lower() or "rate" in msg.lower() or "429" in msg:
+        return "Quota OpenAI esaurita o limite di velocità raggiunto. Riprova tra qualche minuto."
+    if "timeout" in msg.lower():
+        return "Timeout durante la generazione. Controlla la connessione e riprova."
+    if "json" in msg.lower() or "script non valido" in msg.lower():
+        return "La risposta AI non era nel formato atteso. Riprova."
+    # For all other errors: a generic message (no raw Python details exposed to the UI)
+    return "Si è verificato un errore durante la generazione della storia. Controlla i log del server."
 
 # ===========================================================================
 # FASE 1 — GENERAZIONE SCRIPT GPT-4
@@ -136,7 +162,7 @@ def generate_script(client, prompt: str, age_group: str, duration: str,
     system_prompt = _build_system_prompt(age_group, duration, characters)
 
     response = client.chat.completions.create(
-        model="gpt-4",
+        model=STORY_SCRIPT_MODEL,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user",   "content": f"Crea una storia audio su: {prompt}"},
@@ -534,8 +560,13 @@ def run_story_pipeline(story_id: str, params: dict) -> None:
     })
 
     try:
-        _emit("scripting", 5, "Generazione script con GPT-4...")
+        _emit("scripting", 5, "Generazione script in corso...")
         client = get_openai_client()
+        if client is None:
+            raise RuntimeError(
+                "Client OpenAI non inizializzato. "
+                "Verifica che la chiave API OpenAI sia configurata nel pannello Impostazioni AI."
+            )
         script = generate_script(client, prompt, age_group, duration, characters)
 
         script_path = os.path.join(story_dir, "script.json")
@@ -572,9 +603,11 @@ def run_story_pipeline(story_id: str, params: dict) -> None:
 
     except Exception as e:
         log(f"Story pipeline error [{story_id[:8]}]: {e}", "error")
+        # Build a user-friendly Italian message without leaking internal details
+        _user_msg = _friendly_error_message(e)
         _save_meta(meta_path, {
             "id": story_id, "title": title, "status": "error",
-            "error": str(e), "duration_sec": 0,
+            "error": _user_msg, "duration_sec": 0,
             "file_path": None, "output_path": None,
             "characters": [], "scene_count": 0,
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -582,7 +615,7 @@ def run_story_pipeline(story_id: str, params: dict) -> None:
         try:
             socketio.emit("story_studio_progress", {
                 "story_id": story_id, "phase": "error",
-                "progress": 0, "message": f"Errore: {e}",
+                "progress": 0, "message": _user_msg,
             })
         except Exception:
             pass

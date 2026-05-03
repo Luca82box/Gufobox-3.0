@@ -211,8 +211,71 @@ class TestDownloadBinary:
         assert rv.status_code == 422
         assert "piper" in rv.get_json()["error"].lower()
 
+    def test_success_extracts_shared_libs(self, client, tts_env):
+        """Full archive extraction: shared libraries are saved alongside the binary."""
+        import config as cfg
 
-# ─── C) Download voice ─────────────────────────────────────────────────────────
+        # Build a tar.gz that mimics the real piper release structure:
+        # piper/piper, piper/libonnxruntime.so.1.14.1, piper/espeak-ng-data/...
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+            for name, content in [
+                ("piper/piper", b"#!/bin/sh\necho piper 1.0"),
+                ("piper/libonnxruntime.so.1.14.1", b"\x7fELF fake shared lib"),
+                ("piper/libpiper_phonemize.so.1", b"\x7fELF fake phonemize"),
+            ]:
+                info = tarfile.TarInfo(name=name)
+                info.size = len(content)
+                tf.addfile(info, io.BytesIO(content))
+            # Add a directory entry for espeak-ng-data
+            dir_info = tarfile.TarInfo(name="piper/espeak-ng-data")
+            dir_info.type = tarfile.DIRTYPE
+            tf.addfile(dir_info)
+        buf.seek(0)
+        tar_bytes = buf.read()
+
+        mock_response = MagicMock()
+        mock_response.read.side_effect = [tar_bytes, b""]
+        mock_response.__enter__ = lambda s: s
+        mock_response.__exit__ = MagicMock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=mock_response):
+            rv = client.post("/api/tts/offline/download-binary", json={
+                "url": "https://github.com/rhasspy/piper/releases/download/v1/piper_linux_aarch64.tar.gz"
+            })
+
+        assert rv.status_code == 200, rv.get_json()
+        data = rv.get_json()
+        assert data["status"] == "ok"
+
+        bin_dir = cfg.PIPER_LOCAL_BIN_DIR
+        # The piper binary must be present
+        assert os.path.isfile(cfg.PIPER_LOCAL_BIN), "piper binary must be present"
+        # Shared libraries must be extracted too
+        assert os.path.isfile(os.path.join(bin_dir, "libonnxruntime.so.1.14.1")), \
+            "libonnxruntime shared lib must be extracted"
+        assert os.path.isfile(os.path.join(bin_dir, "libpiper_phonemize.so.1")), \
+            "libpiper_phonemize shared lib must be extracted"
+        # espeak-ng-data directory must be present
+        assert os.path.isdir(os.path.join(bin_dir, "espeak-ng-data")), \
+            "espeak-ng-data directory must be extracted"
+
+    def test_status_endpoint_diagnosi_when_not_installed(self, client, tts_env):
+        """Status endpoint includes a 'diagnosi' field when piper is not installed."""
+        import config as cfg
+        # Ensure piper binary does not exist
+        if os.path.isfile(cfg.PIPER_LOCAL_BIN):
+            os.remove(cfg.PIPER_LOCAL_BIN)
+        rv = client.get("/api/tts/offline/status")
+        assert rv.status_code == 200
+        data = rv.get_json()
+        assert "piper_available" in data
+        # When piper is not installed, a diagnosi hint should be returned
+        if not data["piper_available"]:
+            assert "diagnosi" in data
+            assert len(data["diagnosi"]) > 10
+
+
 
 class TestDownloadVoice:
     def test_rejects_unknown_suggested_name(self, client):

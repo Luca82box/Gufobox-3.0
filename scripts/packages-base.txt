@@ -1,0 +1,42 @@
+# packages-base.txt — GufoBox 3.0
+#
+# Pacchetti apt di base richiesti su Raspberry Pi OS (Debian bookworm/bullseye).
+# Letti da install-raspberry.sh durante il passaggio "apt".
+#
+# Formato: un pacchetto per riga.
+#   - Righe vuote e commenti (# ...) vengono ignorati.
+#   - Aggiungere "?" alla fine per marcare un pacchetto come opzionale
+#     (l'installazione non si interrompe se non trovato).
+#
+# ── Python / build tools ──────────────────────────────────────────────────────
+python3
+python3-venv
+python3-pip
+python3-dev
+build-essential
+libssl-dev
+libffi-dev
+
+# ── Utility di base ───────────────────────────────────────────────────────────
+git
+curl
+wget
+
+# ── Media ─────────────────────────────────────────────────────────────────────
+ffmpeg
+mpv
+
+# ── Frontend ──────────────────────────────────────────────────────────────────
+nodejs
+npm
+
+# ── Rete ──────────────────────────────────────────────────────────────────────
+network-manager
+avahi-daemon
+
+# ── Bluetooth ─────────────────────────────────────────────────────────────────
+bluez
+bluez-tools
+
+# ── I2C / SPI ─────────────────────────────────────────────────────────────────
+i2c-tools

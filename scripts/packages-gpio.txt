@@ -1,0 +1,25 @@
+# packages-gpio.txt — GufoBox 3.0
+#
+# Pacchetti apt per GPIO, pulsanti, LED e hardware Raspberry Pi.
+# Letti da install-raspberry.sh durante il passaggio "apt".
+#
+# Formato: un pacchetto per riga; "?" = opzionale (skip se non trovato).
+#
+# ── GPIO — driver principali (Raspberry Pi OS bookworm) ─────────────────────
+python3-gpiozero
+python3-lgpio
+
+# ── SPI ───────────────────────────────────────────────────────────────────────
+python3-spidev?
+
+# ── GPIO legacy (Raspberry Pi OS bullseye e precedenti) ──────────────────────
+# python3-rpi.gpio è sostituito da lgpio su bookworm; marchiato opzionale.
+python3-rpi.gpio?
+
+# ── RFID (SPI) — librerie di sistema opzionali ───────────────────────────────
+# La libreria Python mfrc522/spidev si installa via pip (requirements-hw.txt).
+# Non serve alcun pacchetto apt aggiuntivo su Raspberry Pi OS bookworm.
+
+# ── Audio ALSA (per output diretto senza PulseAudio/PipeWire) ────────────────
+libasound2-dev?
+libportaudio2?

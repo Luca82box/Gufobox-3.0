@@ -62,6 +62,14 @@ ESTIMATED_WPM = 150  # Parole al minuto stimate per il calcolo della durata
 # Default model used for script generation
 STORY_SCRIPT_MODEL = "gpt-4o"
 
+# Supported models for script generation (id -> display label)
+STORY_SCRIPT_MODELS = {
+    "gpt-4o":       "GPT-4o (consigliato, qualità massima)",
+    "gpt-4o-mini":  "GPT-4o mini (più veloce, qualità alta)",
+    "gpt-4-turbo":  "GPT-4 Turbo (stabile)",
+    "gpt-3.5-turbo": "GPT-3.5 Turbo (economico, qualità base)",
+}
+
 
 def _friendly_error_message(exc: Exception) -> str:
     """Return a short, user-facing Italian error message for story pipeline failures.
@@ -158,12 +166,22 @@ OUTPUT (solo JSON valido, nient'altro):
 
 
 def generate_script(client, prompt: str, age_group: str, duration: str,
-                    characters: list | None = None) -> dict:
-    """Usa GPT-4 per generare lo script. Ritorna dict validato."""
+                    characters: list | None = None,
+                    model: str | None = None) -> dict:
+    """Usa GPT per generare lo script. Ritorna dict validato.
+
+    ``model`` seleziona il modello GPT da usare; se None o non riconosciuto
+    viene usato ``STORY_SCRIPT_MODEL`` come default sicuro.
+    """
     system_prompt = _build_system_prompt(age_group, duration, characters)
 
+    # Resolve model: use caller-supplied value only if it is in the allow-list
+    effective_model = STORY_SCRIPT_MODEL
+    if model and model in STORY_SCRIPT_MODELS:
+        effective_model = model
+
     response = client.chat.completions.create(
-        model=STORY_SCRIPT_MODEL,
+        model=effective_model,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user",   "content": f"Crea una storia audio su: {prompt}"},
@@ -529,6 +547,7 @@ def run_story_pipeline(story_id: str, params: dict) -> None:
     enable_sfx     = params.get("enable_sfx", True)
     enable_music   = params.get("enable_music", True)
     characters     = params.get("characters") or None
+    model          = params.get("model") or None
 
     _candidate_dir = os.path.join(STORY_STUDIO_STORIES_DIR, story_id)
     # Path containment: ensure story_dir stays within the stories directory
@@ -568,7 +587,7 @@ def run_story_pipeline(story_id: str, params: dict) -> None:
                 "Client OpenAI non inizializzato. "
                 "Verifica che la chiave API OpenAI sia configurata nel pannello Impostazioni AI."
             )
-        script = generate_script(client, prompt, age_group, duration, characters)
+        script = generate_script(client, prompt, age_group, duration, characters, model=model)
 
         script_path = os.path.join(story_dir, "script.json")
         with open(script_path, "w", encoding="utf-8") as f:

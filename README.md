@@ -65,6 +65,9 @@ sudo bash scripts/install-raspberry.sh --skip-apt
 sudo bash scripts/install-raspberry.sh --skip-service
 ```
 
+> **Guida completa Raspberry Pi:** vedi [`docs/raspberry-setup.md`](docs/raspberry-setup.md)
+> per istruzioni dettagliate su installazione, Piper TTS offline, manifest pacchetti e troubleshooting.
+
 ---
 
 ## Installazione manuale (sviluppo / passo passo)
@@ -172,9 +175,13 @@ Piper richiede il **binario eseguibile** e le **librerie condivise** (`libonnxru
    tramite Pannello Admin → Voce offline → **Carica file Piper** (target: `bin`)
 4. Carica i file voce `.onnx` e `.onnx.json` (target: `voices`)
 
+**Nota voci:** ogni voce richiede **entrambi** i file `.onnx` e `.onnx.json`.
+Se uno dei due è mancante, lo stato API riporta il messaggio esatto di cosa manca.
+
 **Diagnostica:**
-- `GET /api/tts/offline/status` — mostra `piper_available` e un campo `diagnosi`
-  con suggerimenti specifici in caso di errore
+- `GET /api/tts/offline/status` — mostra `piper_available`, `voices_status` (completezza
+  per ogni voce), e `voice_diagnosi` con il messaggio preciso in italiano se la voce
+  configurata è incompleta
 - Verifica che il binario sia ARM64: `file data/piper_bin/piper`
 
 ### GPIO / pulsanti non funzionano

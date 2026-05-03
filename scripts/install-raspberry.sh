@@ -5,7 +5,7 @@
 # Script di installazione completa su Raspberry Pi OS (Debian/bookworm).
 #
 # Installa:
-#   - Pacchetti di sistema (apt): Python 3, Node.js, mpv, gpio, rfid, led, audio...
+#   - Pacchetti di sistema (apt): letti dai manifest scripts/packages-*.txt
 #   - Dipendenze Python (pip): requirements.txt + requirements-hw.txt
 #   - Frontend Vue (npm build)
 #   - Servizio systemd gufobox (opzionale)
@@ -84,45 +84,50 @@ fi
 ok "Progetto trovato."
 
 # ---------------------------------------------------------------------------
-# Pacchetti di sistema (apt)
+# Pacchetti di sistema (apt) — letti dai manifest scripts/packages-*.txt
 # ---------------------------------------------------------------------------
+
+# _install_manifest FILE
+#   Legge il file manifest (un pacchetto per riga; righe vuote e # ignorate).
+#   Pacchetti con "?" finale sono opzionali: se non trovati viene emesso un
+#   avviso invece di interrompere lo script.
+_install_manifest() {
+    local manifest="$1"
+    if [[ ! -f "${manifest}" ]]; then
+        warn "Manifest non trovato: ${manifest} — saltato."
+        return
+    fi
+    local required_pkgs=() optional_pkgs=()
+    while IFS= read -r line || [[ -n "${line}" ]]; do
+        # Strip commenti e spazi
+        line="${line%%#*}"
+        line="${line// /}"
+        [[ -z "${line}" ]] && continue
+        if [[ "${line: -1}" == "?" ]]; then
+            optional_pkgs+=("${line%?}")
+        else
+            required_pkgs+=("${line}")
+        fi
+    done < "${manifest}"
+
+    if [[ ${#required_pkgs[@]} -gt 0 ]]; then
+        info "Installazione pacchetti obbligatori da $(basename "${manifest}")..."
+        apt-get install -y "${required_pkgs[@]}"
+    fi
+    for pkg in "${optional_pkgs[@]}"; do
+        apt-get install -y "${pkg}" 2>/dev/null || \
+            warn "${pkg} non disponibile su questa distribuzione/versione — ignorato."
+    done
+}
+
 if [[ "${SKIP_APT}" == false ]]; then
     section "Installazione pacchetti di sistema (apt)"
     info "Aggiornamento lista pacchetti..."
     apt-get update -qq
 
-    info "Installazione dipendenze base..."
-    apt-get install -y \
-        python3 python3-venv python3-pip python3-dev \
-        git curl wget \
-        ffmpeg mpv \
-        nodejs npm \
-        network-manager \
-        bluez bluez-tools \
-        avahi-daemon \
-        i2c-tools \
-        build-essential \
-        libssl-dev libffi-dev
-
-    info "Installazione dipendenze GPIO/hardware..."
-    # python3-gpiozero e python3-lgpio sono i driver GPIO principali su Raspberry Pi OS bookworm
-    apt-get install -y \
-        python3-gpiozero \
-        python3-lgpio \
-        i2c-tools \
-        python3-spidev || warn "Alcuni pacchetti GPIO potrebbero non essere disponibili su questa versione."
-
-    # RPi.GPIO: disponibile come python3-rpi.gpio su sistemi più vecchi
-    apt-get install -y python3-rpi.gpio 2>/dev/null || \
-        warn "python3-rpi.gpio non disponibile (normale su Raspberry Pi OS bookworm recente — lgpio è il sostituto)."
-
-    # pigpio: non sempre disponibile come pacchetto apt (dipende dalla distro)
-    # Se non disponibile, pip install pigpio funziona comunque (vedi requirements-hw.txt)
-    apt-get install -y pigpio python3-pigpio 2>/dev/null || \
-        warn "pigpio apt non disponibile — verrà installato via pip se necessario."
-
-    # libasound2-dev per audio via ALSA (utile per audio diretto su RPi)
-    apt-get install -y libasound2-dev libportaudio2 2>/dev/null || true
+    _install_manifest "${SCRIPT_DIR}/packages-base.txt"
+    _install_manifest "${SCRIPT_DIR}/packages-gpio.txt"
+    _install_manifest "${SCRIPT_DIR}/packages-piper.txt"
 
     ok "Pacchetti di sistema installati."
 else

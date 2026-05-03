@@ -70,11 +70,12 @@ def _friendly_error_message(exc: Exception) -> str:
     safe and actionable to the end user.
     """
     msg = str(exc)
-    if "openai" in msg.lower() or "api_key" in msg.lower() or "unauthorized" in msg.lower() \
-            or "401" in msg or "authentication" in msg.lower():
+    _auth_keywords = ("openai", "api_key", "unauthorized", "authentication")
+    if any(kw in msg.lower() for kw in _auth_keywords) or "401" in msg:
         return ("Errore di autenticazione OpenAI. "
                 "Verifica la chiave API nel pannello Impostazioni AI.")
-    if "NoneType" in msg or "not initialized" in msg.lower() or "non inizializzato" in msg.lower():
+    _none_keywords = ("not initialized", "non inizializzato")
+    if "NoneType" in msg or any(kw in msg.lower() for kw in _none_keywords):
         return ("Servizio AI non disponibile. "
                 "Verifica che la chiave API OpenAI sia configurata nel pannello Impostazioni AI.")
     if "quota" in msg.lower() or "rate" in msg.lower() or "429" in msg:

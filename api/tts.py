@@ -847,9 +847,13 @@ def api_tts_offline_download_binary():
                     if not rel_name:
                         continue
 
-                    # Previeni path traversal
+                    # Previeni path traversal: dest_path deve essere contenuto in real_bin_dir
                     dest_path = os.path.realpath(os.path.join(local_bin_dir, rel_name))
-                    if not dest_path.startswith(real_bin_dir + os.sep) and dest_path != real_bin_dir:
+                    try:
+                        _common = os.path.commonpath([real_bin_dir, dest_path])
+                    except ValueError:
+                        _common = ""
+                    if _common != real_bin_dir:
                         log(f"Piper archive: percorso non sicuro ignorato: {m.name!r}", "warning")
                         continue
 

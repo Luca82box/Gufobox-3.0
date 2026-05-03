@@ -172,7 +172,12 @@ if [[ "${SKIP_NPM}" == false ]]; then
     if [[ -f "${FRONTEND_DIR}/package.json" ]]; then
         info "Installazione dipendenze npm..."
         cd "${FRONTEND_DIR}"
-        npm install --silent
+        # Usa 'npm ci' per install deterministico se il lockfile è presente
+        if [[ -f "package-lock.json" ]]; then
+            npm ci --silent
+        else
+            npm install --silent
+        fi
         info "Build produzione frontend..."
         npm run build
         cd "${PROJECT_DIR}"

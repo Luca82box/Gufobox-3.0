@@ -36,8 +36,12 @@ Lo script installa automaticamente:
 
 Dopo l'installazione:
 ```bash
-# Configura la chiave API OpenAI (necessaria per Story Studio e chat AI)
-nano .env    # imposta OPENAI_API_KEY=sk-...
+# Lo script crea automaticamente .env da .env.example.
+# DEVI configurare i valori segnaposto prima di avviare GufoBox:
+nano .env
+# Imposta almeno:
+#   OPENAI_API_KEY=sk-...        (necessaria per Story Studio e chat AI)
+#   GUFOBOX_SECRET_KEY=...       (chiave segreta Flask — cambia il valore di default!)
 
 # Avvia il servizio
 sudo systemctl start gufobox

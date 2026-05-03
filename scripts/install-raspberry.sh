@@ -210,11 +210,23 @@ ENV_FILE="${PROJECT_DIR}/.env"
 ENV_EXAMPLE="${PROJECT_DIR}/.env.example"
 if [[ ! -f "${ENV_FILE}" ]] && [[ -f "${ENV_EXAMPLE}" ]]; then
     cp "${ENV_EXAMPLE}" "${ENV_FILE}"
-    warn "Creato .env da .env.example — RICORDA di configurare OPENAI_API_KEY e GUFOBOX_SECRET_KEY!"
+    echo ""
+    echo -e "${RED}╔══════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${RED}║  ATTENZIONE: file .env creato con valori SEGNAPOSTO!             ║${NC}"
+    echo -e "${RED}║  Prima di avviare GufoBox DEVI configurare:                      ║${NC}"
+    echo -e "${RED}║    • OPENAI_API_KEY   — chiave API OpenAI (necessaria per AI)    ║${NC}"
+    echo -e "${RED}║    • GUFOBOX_SECRET_KEY — chiave segreta Flask (cambia il valore)║${NC}"
+    echo -e "${RED}║  Modifica il file:  nano ${ENV_FILE}  ║${NC}"
+    echo -e "${RED}╚══════════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
 elif [[ ! -f "${ENV_FILE}" ]]; then
     warn ".env non trovato e .env.example non presente. Crea manualmente il file .env."
 else
     info ".env già presente."
+    # Avvisa se la chiave OpenAI è ancora al valore di default/vuoto
+    if grep -qE '^OPENAI_API_KEY=($|your-key-here|sk-your|change-me)' "${ENV_FILE}" 2>/dev/null; then
+        warn "OPENAI_API_KEY sembra non configurata in .env — le funzioni AI non funzioneranno."
+    fi
 fi
 
 # ---------------------------------------------------------------------------

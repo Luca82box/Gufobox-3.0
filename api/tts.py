@@ -105,7 +105,7 @@ def _list_voices():
     A voice is any *.onnx file (excluding *.onnx.json).
     """
     try:
-        files = os.listdir(PIPER_VOICES_DIR)
+        files = os.listdir(_cfg.PIPER_VOICES_DIR)
     except OSError:
         return []
     return sorted(
@@ -113,6 +113,50 @@ def _list_voices():
         for f in files
         if f.endswith(".onnx") and not f.endswith(".onnx.json")
     )
+
+
+def _validate_piper_voice_complete(voice: str) -> dict:
+    """Check that both the .onnx model and its .onnx.json config sidecar are present
+    for *voice*.  Returns a dict:
+      {"ok": True}  — both files exist
+      {"ok": False, "missing": [...], "message": "<Italian diagnostic>"}
+
+    Paths are derived from the filesystem scan (not from user input directly),
+    so path injection is not possible.
+    """
+    _validate_voice_name(voice)
+    voices_dir = _cfg.PIPER_VOICES_DIR
+
+    # Scan the filesystem and find the exact disk names matching this voice.
+    # Paths are derived from os.listdir() entries, not from the user-supplied value.
+    try:
+        entries = set(os.listdir(voices_dir))
+    except OSError:
+        entries = set()
+
+    # Expected filenames for a complete voice
+    expected_onnx      = f"{voice}.onnx"
+    expected_onnx_json = f"{voice}.onnx.json"
+
+    missing = []
+    if expected_onnx not in entries:
+        missing.append(expected_onnx)
+    if expected_onnx_json not in entries:
+        missing.append(expected_onnx_json)
+
+    if missing:
+        files_str = " e ".join(missing)
+        return {
+            "ok": False,
+            "missing": missing,
+            "message": (
+                f"File mancanti per la voce '{voice}': {files_str}. "
+                "Sono necessari sia il file .onnx (modello) che il file "
+                ".onnx.json (configurazione). Scaricali entrambi tramite "
+                "'Scarica voce automaticamente' o caricali manualmente."
+            ),
+        }
+    return {"ok": True}
 
 
 def _piper_cache_key(text, voice):
@@ -341,18 +385,42 @@ def api_tts_offline_status():
             "librerie condivise estratte dall'archivio piper_linux_aarch64.tar.gz."
         )
 
+    # Validate completeness (both .onnx + .onnx.json) of each voice found on disk
+    voices_list = _list_voices()
+    voices_status = {}
+    for v in voices_list:
+        check = _validate_piper_voice_complete(v)
+        voices_status[v] = check
+
+    # Check if the currently configured voice is ready
+    configured_voice = piper_settings.get("offline_voice", "")
+    voice_diagnosi = None
+    if configured_voice:
+        try:
+            check = _validate_piper_voice_complete(configured_voice)
+            if not check["ok"]:
+                voice_diagnosi = check["message"]
+        except ValueError:
+            voice_diagnosi = (
+                f"Nome voce configurata non valido: '{configured_voice}'. "
+                "Seleziona una voce valida nel pannello Impostazioni."
+            )
+
     result = {
         "piper_available": available,
         "piper_executable": exe,
         "piper_local_bin": PIPER_LOCAL_BIN,
         "piper_local_bin_exists": local_bin_exists,
         "voices_dir": PIPER_VOICES_DIR,
-        "voices": _list_voices(),
+        "voices": voices_list,
+        "voices_status": voices_status,
         "cache": _piper_cache_stats(),
         "settings": piper_settings,
     }
     if diagnosi:
         result["diagnosi"] = diagnosi
+    if voice_diagnosi:
+        result["voice_diagnosi"] = voice_diagnosi
     return jsonify(result)
 
 
@@ -401,6 +469,16 @@ def api_tts_offline_test():
 
     if not _piper_available():
         return jsonify({"error": "Piper non installato o non trovato in PATH"}), 503
+
+    # Pre-validate voice completeness before attempting synthesis
+    if voice:
+        try:
+            check = _validate_piper_voice_complete(voice)
+            if not check["ok"]:
+                return jsonify({"error": check["message"]}), 422
+        except ValueError:
+            log(f"Piper test: nome voce non valido: {voice!r}", "warning")
+            return jsonify({"error": "Nome voce non valido"}), 400
 
     try:
         wav_path = synthesize_with_piper(text, voice=voice)

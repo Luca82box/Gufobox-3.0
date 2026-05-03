@@ -11,6 +11,7 @@ Endpoints:
   POST   /api/story-studio/story/<id>/regenerate
   GET    /api/story-studio/sfx
   GET    /api/story-studio/voices
+  GET    /api/story-studio/models
 """
 
 import os
@@ -22,6 +23,7 @@ from flask import Blueprint, request, jsonify, send_file
 from core.utils import log
 from core.story_engine import (
     OPENAI_VOICES, AGE_GROUPS, DURATIONS,
+    STORY_SCRIPT_MODELS, STORY_SCRIPT_MODEL,
     start_generation, list_stories, get_story,
     get_story_script, delete_story, is_generating,
     run_story_pipeline, _active_generations, _gen_lock,
@@ -60,6 +62,12 @@ def _validate_generate_input(data: dict) -> str | None:
 
     if data.get("narrator_voice", "nova") not in OPENAI_VOICES:
         return f"Voce narratore non valida. Usa: {', '.join(OPENAI_VOICES.keys())}"
+
+    model = data.get("model")
+    if model is not None and model not in STORY_SCRIPT_MODELS:
+        return (
+            f"Modello AI non valido. Usa uno tra: {', '.join(STORY_SCRIPT_MODELS.keys())}"
+        )
 
     characters = data.get("characters")
     if characters is not None:
@@ -111,6 +119,7 @@ def api_generate_story():
         "enable_sfx":     bool(data.get("enable_sfx", True)),
         "enable_music":   bool(data.get("enable_music", True)),
         "characters":     data.get("characters") or None,
+        "model":          data.get("model") or None,
     }
 
     try:
@@ -204,6 +213,7 @@ def api_regenerate_story(story_id: str):
         "enable_sfx":     meta.get("enable_sfx", True),
         "enable_music":   meta.get("enable_music", True),
         "characters":     meta.get("characters"),
+        "model":          meta.get("model"),
     }
     data = request.get_json(silent=True) or {}
     params.update({k: v for k, v in data.items() if k in params})
@@ -229,3 +239,12 @@ def api_sfx_list():
 @story_studio_bp.route("/story-studio/voices", methods=["GET"])
 def api_voices_list():
     return jsonify([{"id": k, "label": v} for k, v in OPENAI_VOICES.items()])
+
+
+@story_studio_bp.route("/story-studio/models", methods=["GET"])
+def api_models_list():
+    """Return the list of AI models available for story generation."""
+    return jsonify([
+        {"id": k, "label": v, "default": k == STORY_SCRIPT_MODEL}
+        for k, v in STORY_SCRIPT_MODELS.items()
+    ])

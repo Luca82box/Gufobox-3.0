@@ -340,3 +340,91 @@ class TestDownloadVoice:
         with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("simulated")):
             rv = client.post("/api/tts/offline/download-voice", json={"name": "it_IT-paola-medium"})
         assert rv.status_code == 502
+
+
+# ─── C) Piper voice completeness validation ────────────────────────────────────
+
+class TestPiperVoiceCompleteness:
+    """Tests for _validate_piper_voice_complete() and related status helpers."""
+
+    def test_complete_voice_ok(self, tts_env):
+        """Both .onnx and .onnx.json present → ok=True."""
+        from api.tts import _validate_piper_voice_complete
+        voices_dir, _ = tts_env
+        voice = "it_IT-test-medium"
+        open(os.path.join(voices_dir, f"{voice}.onnx"), "wb").close()
+        open(os.path.join(voices_dir, f"{voice}.onnx.json"), "w").close()
+        result = _validate_piper_voice_complete(voice)
+        assert result["ok"] is True
+
+    def test_missing_json_sidecar(self, tts_env):
+        """Only .onnx present → ok=False, message mentions .onnx.json."""
+        from api.tts import _validate_piper_voice_complete
+        voices_dir, _ = tts_env
+        voice = "it_IT-no-json"
+        open(os.path.join(voices_dir, f"{voice}.onnx"), "wb").close()
+        result = _validate_piper_voice_complete(voice)
+        assert result["ok"] is False
+        assert f"{voice}.onnx.json" in result["missing"]
+        assert "onnx.json" in result["message"]
+
+    def test_missing_onnx_model(self, tts_env):
+        """Only .onnx.json present → ok=False, message mentions .onnx."""
+        from api.tts import _validate_piper_voice_complete
+        voices_dir, _ = tts_env
+        voice = "it_IT-no-onnx"
+        open(os.path.join(voices_dir, f"{voice}.onnx.json"), "w").close()
+        result = _validate_piper_voice_complete(voice)
+        assert result["ok"] is False
+        assert f"{voice}.onnx" in result["missing"]
+
+    def test_both_files_missing(self, tts_env):
+        """Neither file present → ok=False, both listed in missing."""
+        from api.tts import _validate_piper_voice_complete
+        voice = "it_IT-ghost-voice"
+        result = _validate_piper_voice_complete(voice)
+        assert result["ok"] is False
+        assert len(result["missing"]) == 2
+
+    def test_invalid_voice_name_raises(self):
+        """Voice name with path traversal raises ValueError."""
+        from api.tts import _validate_piper_voice_complete
+        with pytest.raises(ValueError):
+            _validate_piper_voice_complete("../../etc/passwd")
+
+    def test_status_endpoint_includes_voices_status(self, client, tts_env):
+        """Status endpoint now includes voices_status map."""
+        voices_dir, _ = tts_env
+        voice = "it_IT-status-test"
+        open(os.path.join(voices_dir, f"{voice}.onnx"), "wb").close()
+        open(os.path.join(voices_dir, f"{voice}.onnx.json"), "w").close()
+
+        with patch("api.tts._piper_available", return_value=False):
+            rv = client.get("/api/tts/offline/status")
+
+        assert rv.status_code == 200
+        data = rv.get_json()
+        assert "voices_status" in data
+        assert voice in data["voices_status"]
+        assert data["voices_status"][voice]["ok"] is True
+
+    def test_status_endpoint_voice_diagnosi_when_incomplete(self, client, tts_env):
+        """Status endpoint includes voice_diagnosi when configured voice is incomplete."""
+        import api.tts as tts_mod
+        voices_dir, _ = tts_env
+        voice = "it_IT-incomplete"
+        # Only .onnx present (no .onnx.json)
+        open(os.path.join(voices_dir, f"{voice}.onnx"), "wb").close()
+
+        orig_settings = tts_mod.piper_settings.copy()
+        tts_mod.piper_settings["offline_voice"] = voice
+        try:
+            with patch("api.tts._piper_available", return_value=False):
+                rv = client.get("/api/tts/offline/status")
+        finally:
+            tts_mod.piper_settings.update(orig_settings)
+
+        assert rv.status_code == 200
+        data = rv.get_json()
+        assert "voice_diagnosi" in data
+        assert "onnx.json" in data["voice_diagnosi"]

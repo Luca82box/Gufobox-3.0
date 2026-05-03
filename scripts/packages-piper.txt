@@ -1,0 +1,22 @@
+# packages-piper.txt — GufoBox 3.0
+#
+# Dipendenze di sistema per Piper TTS su Raspberry Pi OS (Debian bookworm/bullseye).
+# Letti da install-raspberry.sh durante il passaggio "apt".
+#
+# Nota: il binario Piper stesso non si installa tramite apt — usa il pannello
+# admin "Voce offline → Scarica binario automaticamente" oppure segui le
+# istruzioni in docs/raspberry-setup.md per il provisioning manuale.
+#
+# Formato: un pacchetto per riga; "?" = opzionale.
+#
+# ── espeak-ng (phonemizer usato da Piper) ─────────────────────────────────────
+# Necessario solo se si usa la versione di Piper che non include espeak-ng-data
+# nell'archivio (le release recenti di GitHub lo includono già estratto).
+espeak-ng?
+
+# ── Librerie C/C++ richieste da Piper (ONNX Runtime) ─────────────────────────
+# Le release ufficiali di Piper per ARM64 includono libonnxruntime.so.* e
+# libpiper_phonemize.so.* nel tar.gz — non serve installazione apt separata.
+# Se si compila Piper dai sorgenti, le seguenti librerie possono essere utili:
+libstdc++6?
+libgomp1?

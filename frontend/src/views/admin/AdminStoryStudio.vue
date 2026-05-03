@@ -51,6 +51,13 @@
             <option v-for="v in voices" :key="v.id" :value="v.id">{{ v.label }}</option>
           </select>
         </div>
+        <div class="form-group">
+          <label>Modello AI</label>
+          <select v-model="form.model" class="input-field">
+            <option :value="null">🤖 Default ({{ defaultModelId }})</option>
+            <option v-for="m in aiModels" :key="m.id" :value="m.id">{{ m.label }}</option>
+          </select>
+        </div>
       </div>
 
       <div class="form-row checkbox-row">
@@ -228,6 +235,7 @@ const form = ref({
   enable_music: true,
   enable_sfx: true,
   characters: [],
+  model: null,
 })
 const showCharacters = ref(false)
 
@@ -240,6 +248,10 @@ const voices = ref([
   { id: 'alloy',   label: 'Alloy — Neutra' },
   { id: 'onyx',    label: 'Onyx — Maschile grave' },
 ])
+
+// ---- AI Models ----
+const aiModels = ref([])
+const defaultModelId = ref('gpt-4o')
 
 // ---- Stories ----
 const stories = ref([])
@@ -296,6 +308,7 @@ const canGenerate = computed(() =>
 onMounted(() => {
   loadStories()
   loadVoices()
+  loadModels()
   connectSocket()
 })
 
@@ -339,6 +352,20 @@ async function loadVoices() {
     if (r.ok) {
       const data = await r.json()
       voices.value = data.map(v => ({ id: v.id, label: `${capitalize(v.id)} — ${v.label}` }))
+    }
+  } catch (_) {}
+}
+
+async function loadModels() {
+  try {
+    const r = await fetch('/api/story-studio/models')
+    if (r.ok) {
+      const data = await r.json()
+      aiModels.value = data
+      const def = data.find(m => m.default)
+      if (def) {
+        defaultModelId.value = def.id
+      }
     }
   } catch (_) {}
 }

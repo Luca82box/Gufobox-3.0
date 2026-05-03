@@ -583,3 +583,78 @@ class TestStoryStudioApi:
                               "characters": [{"name": "X" * 81, "voice": "nova"}]},
                         content_type="application/json")
         assert r.status_code == 400
+
+    # ------------------------------------------------------------------
+    # Model selection tests
+    # ------------------------------------------------------------------
+
+    def test_models_endpoint(self, client):
+        """GET /api/story-studio/models returns list with at least 1 model."""
+        r = client.get("/api/story-studio/models")
+        assert r.status_code == 200
+        data = r.get_json()
+        assert isinstance(data, list)
+        assert len(data) >= 1
+        # Each item has id, label, default
+        for m in data:
+            assert "id" in m
+            assert "label" in m
+            assert "default" in m
+        # Exactly one default
+        defaults = [m for m in data if m["default"]]
+        assert len(defaults) == 1
+
+    def test_generate_invalid_model(self, client):
+        """Invalid model name returns 400."""
+        r = client.post("/api/story-studio/generate",
+                        json={"title": "T", "prompt": "P", "model": "gpt-99-ultra"},
+                        content_type="application/json")
+        assert r.status_code == 400
+        assert "modello" in r.get_json()["error"].lower()
+
+    def test_generate_valid_model_accepted(self, client):
+        """Valid model name is accepted and passed through."""
+        with patch("core.story_engine.start_generation", return_value="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"):
+            r = client.post("/api/story-studio/generate",
+                            json={"title": "Test", "prompt": "Una storia", "model": "gpt-4o-mini"},
+                            content_type="application/json")
+        assert r.status_code == 202
+
+    def test_generate_null_model_accepted(self, client):
+        """Omitting model (None) falls back to default and is accepted."""
+        with patch("core.story_engine.start_generation", return_value="11111111-2222-3333-4444-555555555555"):
+            r = client.post("/api/story-studio/generate",
+                            json={"title": "Test", "prompt": "Una storia"},
+                            content_type="application/json")
+        assert r.status_code == 202
+
+
+class TestGenerateScriptModelSelection:
+    """Unit tests for the model selection path in generate_script()."""
+
+    def test_uses_default_model_when_none(self):
+        from core.story_engine import generate_script, STORY_SCRIPT_MODEL
+        client = _make_mock_client()
+        generate_script(client, "test", "bambino", "short", model=None)
+        call_kwargs = client.chat.completions.create.call_args
+        assert call_kwargs.kwargs["model"] == STORY_SCRIPT_MODEL
+
+    def test_uses_specified_valid_model(self):
+        from core.story_engine import generate_script
+        client = _make_mock_client()
+        generate_script(client, "test", "bambino", "short", model="gpt-4o-mini")
+        call_kwargs = client.chat.completions.create.call_args
+        assert call_kwargs.kwargs["model"] == "gpt-4o-mini"
+
+    def test_falls_back_to_default_for_unknown_model(self):
+        """Unknown model silently falls back to STORY_SCRIPT_MODEL."""
+        from core.story_engine import generate_script, STORY_SCRIPT_MODEL
+        client = _make_mock_client()
+        generate_script(client, "test", "bambino", "short", model="gpt-99-does-not-exist")
+        call_kwargs = client.chat.completions.create.call_args
+        assert call_kwargs.kwargs["model"] == STORY_SCRIPT_MODEL
+
+    def test_story_script_models_dict_has_default(self):
+        from core.story_engine import STORY_SCRIPT_MODELS, STORY_SCRIPT_MODEL
+        assert STORY_SCRIPT_MODEL in STORY_SCRIPT_MODELS
+        assert len(STORY_SCRIPT_MODELS) >= 2
